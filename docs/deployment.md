@@ -238,8 +238,7 @@ launchctl load ~/Library/LaunchAgents/ai.xiatian.xdc-coordinator.plist
 ### Windows Task Scheduler
 
 ```powershell
-schtasks /Create /TN "XDC Coordinator" /SC ONSTART /RL HIGHEST ^
-  /TR "C:\xdc\.venv\Scripts\xdc.exe coordinator --config C:\xdc-demo\coordinator.yaml" /F
+schtasks /Create /TN "XDC Coordinator" /SC ONSTART /RL HIGHEST /TR "C:\xdc\.venv\Scripts\xdc.exe coordinator --config C:\xdc-demo\coordinator.yaml" /F
 ```
 
 Run it under a dedicated non-admin account where possible. Use `--log-file` for durable logs.
