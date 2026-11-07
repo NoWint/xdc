@@ -67,11 +67,16 @@ class TunnelHub:
         return conn
 
     async def detach(self, conn: Connection) -> None:
+        current = False
         async with self._lock:
             if self.connections.get(conn.node_id) is conn:
                 self.connections.pop(conn.node_id, None)
-        self._fail_node(conn.node_id, "tunnel disconnected")
-        log.info("tunnel detached node=%s", conn.node_id)
+                current = True
+        # A replaced tunnel's reader also exits.  Do not fail RPCs that belong
+        # to the newer connection.
+        if current:
+            self._fail_node(conn.node_id, "tunnel disconnected")
+            log.info("tunnel detached node=%s", conn.node_id)
 
     def _fail_node(self, node_id: str, reason: str) -> None:
         for req_id, (owner, future) in list(self.pending.items()):

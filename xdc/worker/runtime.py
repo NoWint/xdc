@@ -32,6 +32,7 @@ class StageSession:
     stage_index: int = 0
     last_used: float = 0.0
     device: str = "cpu"
+    cache_key: str = ""
 
 
 class WorkerRuntime:
@@ -210,8 +211,10 @@ class WorkerRuntime:
             stage_index=stage_index,
             last_used=time.time(),
             device=actual_device,
+            cache_key=cache_key,
         )
         self._evict_sessions()
+        self._evict_stage_cache()
         return {
             "session_id": session_id,
             "stage_index": stage_index,
@@ -274,6 +277,17 @@ class WorkerRuntime:
             oldest = min(self.sessions.items(), key=lambda kv: kv[1].last_used)[0]
             self.sessions.pop(oldest, None)
             log.info("evicted inference session %s", oldest)
+
+    def _evict_stage_cache(self) -> None:
+        """Keep cached stage modules bounded across checkpoints/sessions."""
+        limit = max(1, self.cfg.max_inference_sessions)
+        active = {s.cache_key for s in self.sessions.values() if s.cache_key}
+        for key in list(self.stage_cache):
+            if len(self.stage_cache) <= limit:
+                break
+            if key in active:
+                continue
+            self.stage_cache.pop(key, None)
 
     def release_all(self) -> None:
         self.sessions.clear()
