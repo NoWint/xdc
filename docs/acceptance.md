@@ -24,7 +24,7 @@ verified**. They must not be described as working. See §5.
 
 ```text
 $ pytest -q
-19 passed, 9 warnings in 55.73s
+20 passed, 10 warnings in 56.81s
 ```
 
 The suite launches real subprocesses with separate identities, ports, data
@@ -32,17 +32,17 @@ directories and caches. It is not an in-process mock.
 
 ### 2.1 GitHub Actions matrix
 
-Run [`42406797301`](https://github.com/NoWint/xdc/actions/runs/42406797301) on
-commit `87d7570` passed on all four runners. Each job installed the package,
-built the native extension, ran `xdc doctor`, initialised a cluster, ran the 12
+Run [`42408886904`](https://github.com/NoWint/xdc/actions/runs/42408886904) on
+commit `caec8bb` passed on all four runners. Each job installed the package,
+built the native extension, ran `xdc doctor`, initialised a cluster, ran the 14
 unit tests and the 6 real-process e2e tests.
 
 | Runner | Reported platform | Native | Unit | E2E |
 |---|---|---|---|---|
-| `macos-15` | macOS 15.8.2 arm64 | `available: true` | 12 passed, 39.00 s | 6 passed, 90.67 s |
-| `macos-15-intel` | macOS 15.7.9 x86_64 | `available: true` | 12 passed, 37.61 s | 6 passed, 97.74 s |
-| `windows-latest` | Windows build 26100 x64 | `available: true` | 12 passed, 3.48 s | 6 passed, 76.59 s |
-| `ubuntu-latest` | Linux 7.0 x86_64 (glibc 2.39) | `available: true` | 12 passed, 2.63 s | 6 passed, 52.72 s |
+| `macos-15` | macOS 15.8.2 arm64 | `available: true` | 14 passed, 41.50 s | 6 passed, 111.96 s |
+| `macos-15-intel` | macOS 15.7.9 x86_64 | `available: true` | 14 passed, 38.05 s | 6 passed, 118.79 s |
+| `windows-latest` | Windows build 26100 x64 | `available: true` | 14 passed, 3.71 s | 6 passed, 77.97 s |
+| `ubuntu-latest` | Linux 7.0 x86_64 (glibc 2.39) | `available: true` | 14 passed, 1.94 s | 6 passed, 47.65 s |
 
 The Windows runner is Windows Server, not a physical Windows 10/11 desktop.
 The code path, native build, process lifecycle, TCP/TLS and e2e training are
@@ -60,6 +60,7 @@ verified there; desktop-specific firewall/installer behavior is not.
 | `test_admin_auth_required` | Admin stats/nodes return 401 anonymously; unsigned worker assignment returns 401; `/healthz` stays public |
 | `test_crypto.py` | Identity, canonical signing, replay/timestamp rejection, TLS material |
 | `test_model.py` | Monolithic vs pipeline exactness, KV-cache generation, checkpoint round-trip, FP16, native/Python aggregation parity, outlier rejection, update-metadata bounds, local training, data split, int8 round-trip |
+| `test_tunnel.py` | A replaced tunnel does not fail RPCs belonging to the newer connection |
 
 ## 3. Benchmark evidence
 

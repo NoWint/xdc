@@ -118,7 +118,7 @@ xdc ban / health / monitor
 ```bash
 make unit        # model, crypto, native, data
 make e2e         # launches real coordinator + workers, trains, infers, kills a worker, restarts
-make test        # both; 19 tests on the reference host
+make test        # both; 20 tests on the reference host
 python benchmarks/benchmark.py --workdir /tmp/xdc-bench
 ```
 
