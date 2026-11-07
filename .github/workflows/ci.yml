@@ -1,0 +1,49 @@
+name: xdc-ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest, ubuntu-latest]
+        python: ["3.11"]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install -e ".[dev]"
+      - name: Doctor / native extension
+        run: |
+          python -m xdc doctor --json
+      - name: Init smoke test
+        shell: bash
+        run: |
+          python -m xdc init --no-tls --dir "$RUNNER_TEMP/xdc-init-smoke"
+          test -f "$RUNNER_TEMP/xdc-init-smoke/coordinator.yaml"
+          test -f "$RUNNER_TEMP/xdc-init-smoke/worker1.yaml"
+      - name: Unit tests
+        run: python -m pytest -q -m "not e2e"
+      - name: End-to-end tests
+        run: python -m pytest -q -m e2e
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xdc-logs-${{ matrix.os }}
+          path: |
+            **/logs/*.log
+            **/pytest*.log
+          if-no-files-found: ignore

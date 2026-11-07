@@ -1,0 +1,39 @@
+{
+  "name": "tiny-lm-diloco",
+  "dataset_id": "ds-REPLACE_WITH_UPLOADED_ID",
+  "model": {
+    "vocab_size": 256,
+    "n_layer": 4,
+    "n_head": 4,
+    "n_embd": 128,
+    "block_size": 128,
+    "dropout": 0.0,
+    "bias": true
+  },
+  "training": {
+    "algorithm": "diloco_decoupled",
+    "rounds": 20,
+    "local_steps": 20,
+    "batch_size": 4,
+    "seq_len": 128,
+    "lr": 0.0003,
+    "weight_decay": 0.01,
+    "grad_clip": 1.0,
+    "outer_lr": 1.0,
+    "outer_momentum": 0.9,
+    "nesterov": false,
+    "min_workers": 1,
+    "max_workers": 4,
+    "quorum_fraction": 1.0,
+    "grace_s": 0.5,
+    "round_timeout_s": 180,
+    "eval_every": 1,
+    "eval_batches": 8,
+    "val_fraction": 0.1,
+    "seed": 1234,
+    "compression": "fp16",
+    "max_update_norm_ratio": 4.0,
+    "mode": "pretrain"
+  },
+  "auto_start": true
+}

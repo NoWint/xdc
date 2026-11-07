@@ -1,0 +1,19 @@
+# Copy and replace the tokens, or just run: xdc init --dir ./xdc-demo
+coordinator:
+  host: 0.0.0.0
+  port: 8787
+  data_dir: ./xdc-data/coordinator
+  admin_token: REPLACE_WITH_LONG_RANDOM_ADMIN_TOKEN
+  join_token: REPLACE_WITH_LONG_RANDOM_JOIN_TOKEN
+  heartbeat_timeout_s: 15
+  offline_grace_s: 5
+  job_tick_s: 0.5
+  max_upload_mb: 512
+  max_dataset_mb: 512
+  eval_device: cpu
+  checkpoint_keep: 20
+  tls:
+    enabled: true
+    cert_file: ./xdc-data/tls/server.crt
+    key_file: ./xdc-data/tls/server.key
+    ca_file: ./xdc-data/tls/ca.pem

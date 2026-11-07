@@ -1,0 +1,163 @@
+{
+  "xdc_version": "0.1.0",
+  "native": "xdc-native 0.1.0",
+  "python": "3.11.15",
+  "torch": "2.11.0",
+  "platform": "macOS-27.2-arm64-arm-64bit",
+  "machine": "arm64",
+  "workers": 2,
+  "caveat": "Workers share one physical host; this measures correctness and coordination overhead, not multi-machine speedup.",
+  "distributed_training": {
+    "job_id": "job-191e68537080",
+    "rounds": 3,
+    "workers": 2,
+    "tokens": 30720,
+    "wall_s": 5.884222291002516,
+    "tokens_per_s": 5220.740903513032,
+    "initial_loss": 5.5522602796554565,
+    "final_loss": 2.9515467286109924,
+    "per_round": [
+      {
+        "round": 0,
+        "version": 1,
+        "workers": [
+          "node-b4b4613edcb69664fb7d9394",
+          "node-fc184e43bf540783d239b413"
+        ],
+        "updates_received": 2,
+        "updates_used": 2,
+        "dropped": [],
+        "norm": 1.9349904779132392,
+        "train_loss": 4.842059087753295,
+        "val_loss": 4.446479082107544,
+        "tokens": 10240,
+        "aggregate_s": 0.01558933302294463,
+        "local_elapsed_max_s": 2.4214110374450684,
+        "local_elapsed_sum_s": 4.8382909297943115,
+        "native": true,
+        "timestamp": 1794078726.784383
+      },
+      {
+        "round": 1,
+        "version": 2,
+        "workers": [
+          "node-b4b4613edcb69664fb7d9394",
+          "node-fc184e43bf540783d239b413"
+        ],
+        "updates_received": 2,
+        "updates_used": 2,
+        "dropped": [],
+        "norm": 1.5325716194770496,
+        "train_loss": 4.1868478655815125,
+        "val_loss": 3.6523386240005493,
+        "tokens": 10240,
+        "aggregate_s": 0.015217249980196357,
+        "local_elapsed_max_s": 0.8001599311828613,
+        "local_elapsed_sum_s": 1.583460807800293,
+        "native": true,
+        "timestamp": 1794078728.1564858
+      },
+      {
+        "round": 2,
+        "version": 3,
+        "workers": [
+          "node-b4b4613edcb69664fb7d9394",
+          "node-fc184e43bf540783d239b413"
+        ],
+        "updates_received": 2,
+        "updates_used": 2,
+        "dropped": [],
+        "norm": 1.4420776891756324,
+        "train_loss": 3.4583941459655763,
+        "val_loss": 2.9515467286109924,
+        "tokens": 10240,
+        "aggregate_s": 0.015273541997885332,
+        "local_elapsed_max_s": 0.7546401023864746,
+        "local_elapsed_sum_s": 1.5059690475463867,
+        "native": true,
+        "timestamp": 1794078729.527678
+      }
+    ],
+    "algorithm": "diloco_decoupled",
+    "compression": "fp16",
+    "round_wall_s": 5.271854877471924,
+    "round_tokens_per_s": 5827.171026895097,
+    "round_durations_s": [
+      2.9488041400909424,
+      1.1611218452453613,
+      1.1619288921356201
+    ],
+    "local_critical_s": 3.9762110710144043,
+    "aggregation_s": 0.04608012500102632,
+    "compute_wall_s": 4.022291196015431,
+    "compute_tokens_per_s": 7637.438092605504
+  },
+  "single_process_training": {
+    "device": "cpu",
+    "threads": 4,
+    "steps": 60,
+    "tokens": 30720,
+    "elapsed_s": 4.289779084007023,
+    "tokens_per_s": 7161.207931319595,
+    "final_local_loss": 3.6650362730026247
+  },
+  "training_speedup": 0.8137134241571066,
+  "compute_training_speedup": 1.0665013732115098,
+  "distributed_inference": {
+    "tokens": 24,
+    "first_token_ms": 48.21441599051468,
+    "total_ms": 130.2891249943059,
+    "client_wall_s": 0.13247574999695644,
+    "tokens_per_s": 184.20570405280478,
+    "distributed": true,
+    "stages": [
+      {
+        "stage": 0,
+        "node_id": "node-b4b4613edcb69664fb7d9394",
+        "node_name": "worker-2",
+        "backend": "cpu",
+        "device": "cpu",
+        "layer_start": 0,
+        "layer_end": 2,
+        "layers": 2
+      },
+      {
+        "stage": 1,
+        "node_id": "node-fc184e43bf540783d239b413",
+        "node_name": "worker-1",
+        "backend": "cpu",
+        "device": "cpu",
+        "layer_start": 2,
+        "layer_end": 4,
+        "layers": 2
+      }
+    ],
+    "bytes_b64": "IHRoZSB0IHRoZSB0aGUgdCB0aGUgdGhl"
+  },
+  "local_inference_cpu": {
+    "device": "cpu",
+    "tokens": 24,
+    "elapsed_s": 0.03303095800220035,
+    "tokens_per_s": 726.5910967039238,
+    "bytes_b64": "IHRoZSB0IHRoZSB0aGUgdCB0aGUgdGhl"
+  },
+  "local_inference_mps": {
+    "device": "mps",
+    "tokens": 24,
+    "elapsed_s": 0.4117917080002371,
+    "tokens_per_s": 58.28189235900345,
+    "bytes_b64": "IHRoZSB0IHRoZSB0aGUgdCB0aGUgdGhl"
+  },
+  "inference_speedup_vs_cpu": 0.2535204530972476,
+  "native_aggregation": {
+    "available": true,
+    "params": 875264,
+    "updates": 2,
+    "iterations": 20,
+    "native_ms": 9.840102100861259,
+    "python_fallback_ms": 29.205925000132993,
+    "speedup": 2.9680510121512595,
+    "version": "xdc-native 0.1.0",
+    "method": "real state_dict aggregation"
+  }
+}

@@ -1,0 +1,19 @@
+XDC (Xiatian Distributed Compute)
+Copyright 2026 Xiatian AI
+
+This product includes software developed by third parties:
+- PyTorch (BSD-style license)
+- FastAPI (MIT)
+- Uvicorn (BSD-3-Clause)
+- httpx (BSD-3-Clause)
+- cryptography (Apache-2.0 OR BSD-3-Clause)
+- safetensors (Apache-2.0)
+- websockets (BSD-3-Clause)
+- pybind11 (BSD-3-Clause)
+- PyYAML (MIT)
+- psutil (BSD-3-Clause)
+- pytest (MIT)
+
+Algorithmic inspiration (no source code copied):
+- DiLoCo / Decoupled DiLoCo (Google DeepMind), Hivemind, Petals, OpenDiLoCo.
+See docs/research.md for citation details.

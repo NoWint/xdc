@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XDC — Distributed Compute</title>
+<style>
+  :root{
+    --bg:#07090d; --panel:#0c1118; --panel2:#101722; --line:#1b2837;
+    --text:#e8f0f8; --muted:#7d91a6; --accent:#4de3a3; --accent2:#54a6ff;
+    --warn:#ffcc66; --bad:#ff6b7a; --mono:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:
+      radial-gradient(1000px 600px at 85% -10%,rgba(84,166,255,.12),transparent 60%),
+      radial-gradient(800px 500px at -10% 20%,rgba(77,227,163,.08),transparent 55%),
+      var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+  header{display:flex;align-items:center;gap:18px;padding:18px 30px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(7,9,13,.82);backdrop-filter:blur(14px);z-index:3}
+  .logo{font-weight:800;letter-spacing:.16em;font-size:16px}
+  .logo b{color:var(--accent)}
+  .tag{color:var(--muted);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+  header .spacer{flex:1}
+  .token{display:flex;gap:8px;align-items:center}
+  input,button{font:inherit}
+  input{background:#0a0f16;border:1px solid var(--line);color:var(--text);border-radius:9px;padding:9px 12px;outline:none;min-width:240px}
+  input:focus{border-color:var(--accent2)}
+  button{background:linear-gradient(180deg,#183047,#122234);border:1px solid #24435f;color:var(--text);border-radius:9px;padding:9px 14px;cursor:pointer}
+  button:hover{border-color:var(--accent2)}
+  button.primary{background:linear-gradient(180deg,#1c5f4a,#103a2e);border-color:#256b55}
+  button.ghost{padding:5px 9px;font-size:12px}
+  main{padding:26px 30px 60px;max-width:1500px;margin:0 auto}
+  .grid{display:grid;gap:16px}
+  .cards{grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin-bottom:20px}
+  .card{background:linear-gradient(180deg,rgba(16,23,34,.95),rgba(10,15,22,.95));border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .card .k{color:var(--muted);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .card .v{font:600 24px/1.3 var(--mono);margin-top:8px}
+  .card .v small{font-size:12px;color:var(--muted);font-weight:400}
+  .layout{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:18px}
+  @media(max-width:1000px){.layout{grid-template-columns:1fr}}
+  .panel{background:linear-gradient(180deg,rgba(12,17,24,.96),rgba(9,13,19,.96));border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .panel h2{margin:0;padding:16px 18px;border-bottom:1px solid var(--line);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:#b8c8d8;display:flex;align-items:center;gap:10px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent)}
+  .list{max-height:480px;overflow:auto}
+  .node{padding:14px 18px;border-bottom:1px solid rgba(27,40,55,.7);display:grid;grid-template-columns:1fr auto;gap:8px}
+  .node:last-child{border-bottom:0}
+  .name{font-weight:650}
+  .sub{color:var(--muted);font:11px/1.5 var(--mono);margin-top:3px}
+  .badge{font:11px var(--mono);padding:3px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+  .badge.ok{color:var(--accent);border-color:rgba(77,227,163,.35);background:rgba(77,227,163,.06)}
+  .badge.off{color:var(--bad);border-color:rgba(255,107,122,.3)}
+  .badge.warn{color:var(--warn);border-color:rgba(255,204,102,.3)}
+  .bar{height:5px;background:#0a1119;border-radius:99px;overflow:hidden;margin-top:10px}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent2),var(--accent));width:0%}
+  .job{padding:15px 18px;border-bottom:1px solid rgba(27,40,55,.7)}
+  .job:last-child{border-bottom:0}
+  .jobhead{display:flex;gap:10px;align-items:center;justify-content:space-between}
+  .jobname{font-weight:650}
+  .meta{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font:11px var(--mono);margin-top:7px}
+  .mono{font-family:var(--mono)}
+  .err{color:var(--bad);font:12px var(--mono);padding:14px 18px;display:none}
+  .empty{color:var(--muted);padding:28px 18px;text-align:center}
+  .footer{color:#5e7184;font-size:11px;margin-top:22px;display:flex;gap:18px;flex-wrap:wrap}
+  .footer a{color:#7fa7cc;text-decoration:none}
+  .pulse{animation:pulse 2.4s infinite}
+  @keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">X<b>D</b>C</div>
+  <div class="tag">distributed ai compute</div>
+  <div class="spacer"></div>
+  <div class="token">
+    <input id="token" type="password" placeholder="admin token" autocomplete="off">
+    <button id="save" class="primary">Connect</button>
+  </div>
+</header>
+<main>
+  <div id="error" class="panel err"></div>
+  <section class="grid cards">
+    <div class="card"><div class="k">Nodes online</div><div class="v" id="nodesOnline">—</div></div>
+    <div class="card"><div class="k">Pooled CPU threads</div><div class="v" id="cpu">—</div></div>
+    <div class="card"><div class="k">Pooled memory</div><div class="v"><span id="mem">—</span><small> MB</small></div></div>
+    <div class="card"><div class="k">Tokens trained</div><div class="v" id="tokens">—</div></div>
+    <div class="card"><div class="k">Jobs running</div><div class="v" id="jobsRunning">—</div></div>
+    <div class="card"><div class="k">Coordinator</div><div class="v" id="uptime" style="font-size:18px">—</div></div>
+  </section>
+  <div class="layout">
+    <section class="panel">
+      <h2><span class="dot"></span>Compute pool <span class="spacer" style="flex:1"></span><span class="mono" id="nodeCount" style="color:var(--muted);font-size:11px"></span></h2>
+      <div id="nodes" class="list"><div class="empty">No nodes yet. Start a worker with <span class="mono">xdc worker</span>.</div></div>
+    </section>
+    <section class="panel">
+      <h2><span class="dot"></span>Training jobs</h2>
+      <div id="jobs" class="list"><div class="empty">No jobs.</div></div>
+    </section>
+  </div>
+  <div class="footer">
+    <span>XDC coordinator · data stays on your devices</span>
+    <a href="/healthz" target="_blank">health</a>
+    <a href="/metrics" target="_blank">metrics</a>
+    <a href="https://github.com/NoWint/xdc" target="_blank">source</a>
+    <span id="updated"></span>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+function token(){ return ($("#token").value || sessionStorage.getItem("xdc_token") || "").trim(); }
+function authHeaders(){ return {"Authorization":"Bearer " + token()}; }
+function fmt(n){ return Number(n||0).toLocaleString(); }
+function humanUptime(s){ s=Math.floor(s||0); const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60); return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m ${s%60}s`; }
+function badged(state){
+  const offline = ["offline","banned"].includes(state);
+  return `<span class="badge ${state==="online"?"ok":offline?"off":state==="waiting"?"warn":""}">${esc(state)}</span>`;
+}
+async function api(path, opts={}){
+  const r = await fetch(path, {...opts, headers:{...(opts.headers||{}), ...authHeaders()}});
+  if(r.status===401||r.status===403) throw new Error("Admin token rejected. Paste the token from coordinator.yaml.");
+  if(!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r.json();
+}
+function showError(e){ const el=$("#error"); el.style.display="block"; el.textContent=e.message||String(e); }
+function clearError(){ $("#error").style.display="none"; }
+
+async function refresh(){
+  if(!token()){ $("#nodes").innerHTML='<div class="empty">Paste the admin token to see your compute pool.</div>'; return; }
+  try{
+    const [stats,nodes,jobs] = await Promise.all([api("/v1/stats"), api("/v1/nodes"), api("/v1/jobs")]);
+    clearError();
+    $("#nodesOnline").textContent = `${stats.nodes_online}/${stats.nodes_total}`;
+    $("#cpu").textContent = fmt(stats.pooled_cpu_threads);
+    $("#mem").textContent = fmt(stats.pooled_memory_mb);
+    $("#tokens").textContent = fmt(stats.total_tokens_trained);
+    $("#jobsRunning").textContent = `${stats.jobs_running}/${stats.jobs_total}`;
+    $("#uptime").textContent = humanUptime(stats.uptime_s);
+    $("#nodeCount").textContent = `${nodes.length} registered`;
+    if(!nodes.length){ $("#nodes").innerHTML='<div class="empty">No nodes yet. Start a worker with <span class="mono">xdc worker</span>.</div>'; }
+    else $("#nodes").innerHTML = nodes.map(n=>{
+      const c=n.capabilities, state=n.banned?"banned":(n.online?"online":"offline");
+      const tunnel = n.tunnel_connected?`<span class="badge ok">tunnel</span>`:`<span class="badge off">no tunnel</span>`;
+      return `<div class="node"><div>
+        <div class="name">${esc(n.name)} ${tunnel}</div>
+        <div class="sub">${esc(c.backend)} · ${esc(c.device_name)} · score ${Number(c.compute_score).toFixed(1)} · ${esc(c.machine)}</div>
+        <div class="sub">updates ${n.accepted_updates} · rejected ${n.rejected_updates} · rep ${Number(n.reputation).toFixed(2)} · seen ${Number(n.last_seen_s).toFixed(1)}s ago</div>
+      </div><div style="text-align:right">${badged(state)}<div class="sub">${esc(n.node_id.slice(0,18))}</div></div></div>`;
+    }).join("");
+    if(!jobs.length){ $("#jobs").innerHTML='<div class="empty">No training jobs. Launch one with <span class="mono">xdc train</span>.</div>'; }
+    else $("#jobs").innerHTML = jobs.map(j=>{
+      const total=j.training.rounds, done=j.next_round, pct=Math.min(100,Math.round(done/Math.max(total,1)*100));
+      const loss=j.final_loss==null?"—":Number(j.final_loss).toFixed(4);
+      return `<div class="job">
+        <div class="jobhead"><div class="jobname">${esc(j.name)}</div>${badged(j.state)}</div>
+        <div class="meta"><span>${esc(j.job_id)}</span><span>${done}/${total} rounds</span><span>loss ${loss}</span><span>${fmt(j.tokens_trained)} tokens</span><span>${j.parameters?fmt(j.parameters)+" params":""}</span></div>
+        <div class="bar"><i style="width:${pct}%"></i></div>
+        ${j.error?`<div class="sub" style="color:var(--bad)">${esc(j.error)}</div>`:""}
+      </div>`;
+    }).join("");
+    $("#updated").textContent = "updated " + new Date().toLocaleTimeString();
+  }catch(e){ showError(e); }
+}
+$("#save").onclick = ()=>{ sessionStorage.setItem("xdc_token", $("#token").value.trim()); refresh(); };
+$("#token").addEventListener("keydown", e=>{ if(e.key==="Enter") $("#save").click(); });
+$("#token").value = sessionStorage.getItem("xdc_token") || "";
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# Copy to each device. The node Ed25519 key is created under data_dir/identity.
+worker:
+  coordinator_url: https://COORDINATOR-LAN-IP:8787
+  join_token: SAME_JOIN_TOKEN_AS_COORDINATOR
+  data_dir: ./xdc-data/worker
+  name: ""                 # defaults to hostname-nodeid
+  backend: auto            # auto|cpu|cuda|cuda:0|mps|xpu|rocm
+  threads: 0               # 0 = PyTorch default
+  max_memory_mb: 0         # 0 = report all available; set a cap for sharing
+  tls_ca: ./xdc-data/tls/ca.pem
+  allow_insecure: false    # true only for loopback HTTP development
+  heartbeat_interval_s: 5
+  poll_interval_s: 1
+  max_inference_sessions: 4
+  mps_cpu_threshold_params: 50000000  # auto uses CPU below this on Apple Metal
+  labels:
+    location: home
