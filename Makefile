@@ -16,7 +16,7 @@ test:
 	python3 -m pytest -q
 
 bench:
-	python3 benchmarks/benchmark.py --help
+	python3 benchmarks/benchmark.py --workdir /tmp/xdc-bench --output benchmarks/latest.json
 
 clean:
 	rm -rf build dist *.egg-info .pytest_cache
