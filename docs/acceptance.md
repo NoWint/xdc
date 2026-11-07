@@ -24,7 +24,7 @@ verified**. They must not be described as working. See §5.
 
 ```text
 $ pytest -q
-18 passed, 9 warnings in 57.02s
+19 passed, 9 warnings in 55.73s
 ```
 
 The suite launches real subprocesses with separate identities, ports, data
@@ -59,7 +59,7 @@ verified there; desktop-specific firewall/installer behavior is not.
 | `test_tls_end_to_end` | HTTPS coordinator, CA verified by worker, training completes, untrusted certificate is rejected |
 | `test_admin_auth_required` | Admin stats/nodes return 401 anonymously; unsigned worker assignment returns 401; `/healthz` stays public |
 | `test_crypto.py` | Identity, canonical signing, replay/timestamp rejection, TLS material |
-| `test_model.py` | Monolithic vs pipeline exactness, KV-cache generation, checkpoint round-trip, FP16, native/Python aggregation parity, outlier rejection, local training, data split, int8 round-trip |
+| `test_model.py` | Monolithic vs pipeline exactness, KV-cache generation, checkpoint round-trip, FP16, native/Python aggregation parity, outlier rejection, update-metadata bounds, local training, data split, int8 round-trip |
 
 ## 3. Benchmark evidence
 

@@ -197,7 +197,7 @@ def generate_tls_material(out_dir: str | Path, hosts: list[str] | None = None) -
         x509.IPAddress(ipaddress.ip_address("::1")),
     ]
     for host in hosts:
-        if not host:
+        if not host or host in {"0.0.0.0", "::"}:
             continue
         try:
             alt_names.append(x509.IPAddress(ipaddress.ip_address(host)))
@@ -280,7 +280,18 @@ def _local_ipv4s() -> list[str]:
             s.close()
     except Exception:
         pass
-    return sorted(ip for ip in ips if not ip.startswith("127."))
+    try:
+        # Multi-homed laptops (Wi-Fi + Ethernet + VPN): include every local
+        # IPv4 address so a worker on any interface can verify the certificate.
+        import psutil
+
+        for addrs in psutil.net_if_addrs().values():
+            for addr in addrs:
+                if addr.family == socket.AF_INET and addr.address:
+                    ips.add(addr.address)
+    except Exception:
+        pass
+    return sorted(ip for ip in ips if not ip.startswith("127.") and ip != "0.0.0.0")
 
 
 def token_hash(token: str) -> str:
