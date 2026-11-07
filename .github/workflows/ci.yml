@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest, ubuntu-latest]
+        os: [macos-15, macos-15-intel, windows-latest, ubuntu-latest]
         python: ["3.11"]
     timeout-minutes: 40
     steps:
@@ -28,6 +28,9 @@ jobs:
       - name: Doctor / native extension
         run: |
           python -m xdc doctor --json
+      - name: Require native extension
+        run: |
+          python -c "import sys; from xdc import native; print(native.VERSION); sys.exit(0 if native.AVAILABLE else 1)"
       - name: Init smoke test
         shell: bash
         run: |

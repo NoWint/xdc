@@ -161,11 +161,12 @@ def verify_signed_request(
             return False, "timestamp outside allowed skew"
     except ValueError:
         return False, "invalid timestamp"
-    if not nonces.check_and_add(headers.get("x-xdc-node", "") + ":" + nonce):
-        return False, "replayed nonce"
     payload = request_payload(method, path_with_query, ts, nonce, body)
+    # Verify first so unauthenticated traffic cannot grow the replay cache.
     if not verify_node_signature(public_key, payload, sig):
         return False, "bad signature"
+    if not nonces.check_and_add(headers.get("x-xdc-node", "") + ":" + nonce):
+        return False, "replayed nonce"
     return True, "ok"
 
 
