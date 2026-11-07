@@ -1,5 +1,7 @@
 # XDC — consumer-grade distributed AI compute
 
+[![xdc-ci](https://github.com/NoWint/xdc/actions/workflows/ci.yml/badge.svg)](https://github.com/NoWint/xdc/actions/workflows/ci.yml)
+
 **XDC (Xiatian Distributed Compute)** lets ordinary Macs and Windows PCs pool idle CPU/GPU memory and compute to train and run a model **together**. It is not a prompt-forwarding wrapper around one machine's model server.
 
 - **Training:** workers run local AdamW steps on disjoint data shards; the coordinator performs DiLoCo-style periodic pseudo-gradient aggregation with a decoupled quorum, grace window, token weighting and failure-aware commits.
@@ -34,11 +36,14 @@
 | TLS + signed registration/heartbeat/update | working, tested |
 | C++ native aggregation/sampling/data batches | working, optional |
 | Metrics, dashboard, logs, doctor | working; dashboard HTTP smoke-tested |
-| macOS Apple Silicon CPU/MPS | tested locally |
-| Windows x64 install/build/test | CI workflow defined; **not yet executed** |
+| macOS Apple Silicon CPU/MPS | tested locally + CI |
+| macOS Intel CPU | verified in CI (`macos-15-intel`) |
+| Windows x64 install/build/test | verified in CI (Windows Server build 26100) |
+| Linux x86_64 install/build/test | verified in CI (`ubuntu-latest`) |
+| Native C++ build on all four CI runners | verified |
 | Two **physical** devices | not available in this environment — **unverified** |
 | NVIDIA CUDA / AMD ROCm / Intel XPU | code path present, **unverified** hardware |
-| Intel Mac / Windows arm64 | **unverified** |
+| Windows 10/11 physical desktop, Windows arm64 | **unverified** |
 | LoRA / RL / tensor parallelism | **not implemented in v0.1** |
 | Byzantine fault tolerance | not claimed; 2-worker outlier guard is limited |
 

@@ -8,26 +8,47 @@ unverified. Nothing below is claimed from code inspection alone.
 
 ## 1. Verdict
 
-The core protocol is functional and tested end to end on macOS: two independent
-workers register with Ed25519 identities, open outbound tunnels, train on
-disjoint data shards, upload real pseudo-gradients, the coordinator aggregates
-them, parameters change, checkpoints survive a coordinator restart, a killed
-worker is detected and the job completes, and two-stage layer-sharded inference
-matches monolithic greedy generation byte for byte.
+The core protocol is functional and tested end to end on macOS and in a
+four-platform CI matrix (macOS 15 arm64, macOS 15 Intel, Windows x64, Ubuntu
+x86_64): two independent workers register with Ed25519 identities, open outbound
+tunnels, train on disjoint data shards, upload real pseudo-gradients, the
+coordinator aggregates them, parameters change, checkpoints survive a coordinator
+restart, a killed worker is detected and the job completes, and two-stage
+layer-sharded inference matches monolithic greedy generation byte for byte.
 
-A **second physical device**, Windows execution, CUDA/ROCm/Intel XPU, Intel Mac,
-LoRA, RL and tensor parallelism are **not verified**. They must not be described
-as working. See §5.
+A **second physical device**, CUDA/ROCm/Intel XPU, physical Windows 10/11
+desktop behavior, Windows arm64, LoRA, RL and tensor parallelism are **not
+verified**. They must not be described as working. See §5.
 
 ## 2. Automated tests
 
 ```text
 $ pytest -q
-18 passed, 9 warnings in 61.06s
+18 passed, 9 warnings in 57.02s
 ```
 
 The suite launches real subprocesses with separate identities, ports, data
 directories and caches. It is not an in-process mock.
+
+### 2.1 GitHub Actions matrix
+
+Run [`42406797301`](https://github.com/NoWint/xdc/actions/runs/42406797301) on
+commit `87d7570` passed on all four runners. Each job installed the package,
+built the native extension, ran `xdc doctor`, initialised a cluster, ran the 12
+unit tests and the 6 real-process e2e tests.
+
+| Runner | Reported platform | Native | Unit | E2E |
+|---|---|---|---|---|
+| `macos-15` | macOS 15.8.2 arm64 | `available: true` | 12 passed, 39.00 s | 6 passed, 90.67 s |
+| `macos-15-intel` | macOS 15.7.9 x86_64 | `available: true` | 12 passed, 37.61 s | 6 passed, 97.74 s |
+| `windows-latest` | Windows build 26100 x64 | `available: true` | 12 passed, 3.48 s | 6 passed, 76.59 s |
+| `ubuntu-latest` | Linux 7.0 x86_64 (glibc 2.39) | `available: true` | 12 passed, 2.63 s | 6 passed, 52.72 s |
+
+The Windows runner is Windows Server, not a physical Windows 10/11 desktop.
+The code path, native build, process lifecycle, TCP/TLS and e2e training are
+verified there; desktop-specific firewall/installer behavior is not.
+
+### 2.2 Test coverage
 
 | Test | What it actually proves |
 |---|---|
@@ -82,13 +103,15 @@ is stage memory distribution, not single-host speed.
 | Worker exit handling | **verified** | kill worker; lost/retry events; job completes with remaining nodes |
 | Cross-device sharded inference correct | **verified across processes** | contiguous 2-stage pipeline, KV cache on workers, exact greedy byte parity |
 | Single vs multi benchmark | **verified** | §3; honest slowdown for end-to-end, compute at parity |
-| macOS install/build/basic use | **verified locally** | Apple M4, Python 3.11, native extension compiled |
-| Windows install/build/basic use | **unverified** | GitHub Actions matrix is defined but has not run in this environment |
+| macOS Apple Silicon install/build/basic use | **verified locally and in CI** | Apple M4 local run; `macos-15` arm64 CI: 12 unit + 6 e2e, native built |
+| macOS Intel install/build/basic use | **verified in CI** | `macos-15-intel` x86_64 CI: 12 unit + 6 e2e, native built; no Metal GPU claim |
+| Windows x64 install/build/basic use | **verified in CI** | `windows-latest` (Windows build 26100) x64: 12 unit + 6 e2e, native built; physical Windows 10/11 desktop not separately exercised |
+| Linux x86_64 install/build/basic use | **verified in CI** | `ubuntu-latest`: 12 unit + 6 e2e, native built |
 | Second physical device over LAN | **unverified** | only one physical host available; no multi-machine latency claim |
 | NVIDIA CUDA | **unverified** | code path and honest detection present, no hardware |
 | AMD ROCm | **unverified** | code path and honest detection present, no hardware |
 | Intel XPU | **unverified** | code path and honest detection present, no hardware |
-| Intel Mac / Windows arm64 | **unverified** | no hardware |
+| Windows arm64 | **unverified** | no runner/hardware |
 | TLS + signed requests | **verified** | TLS e2e, auth e2e, replay/timestamp unit tests |
 | Shard-only dataset delivery | **verified** | dedicated e2e test |
 | Dashboard | **verified via HTTP smoke test** | served 200; browser interaction not automated |

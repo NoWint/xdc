@@ -14,13 +14,15 @@ Supported execution backends:
 
 | Backend | Status |
 |---|---|
-| CPU (x86_64/arm64) | supported, tested on Apple M4 |
+| CPU (x86_64/arm64) | supported; tested on Apple M4, macOS 15 arm64/Intel, Windows build 26100, Ubuntu in CI |
 | Apple MPS | supported, tested on M4 |
 | NVIDIA CUDA | code path present; **unverified** (no NVIDIA hardware in test environment) |
 | AMD ROCm | code path present; **unverified** |
 | Intel XPU | code path present; **unverified** |
 | MLX | detected/reported; not used by the execution engine |
 | NPU | reported unavailable; no vendor-neutral PyTorch backend |
+
+On macOS x86_64, pip resolves torch 2.2.2 (the newest Intel wheel), which requires NumPy 1.x. `pyproject.toml` therefore pins `numpy<2` only on that platform; Apple Silicon and other platforms use current NumPy.
 
 ## 2. macOS install
 

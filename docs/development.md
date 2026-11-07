@@ -122,7 +122,10 @@ It launches coordinator + workers, runs training, compares an equivalent single-
 
 ## 9. Release checks
 
-- `pytest -q` green on macOS and Windows.
+- `pytest -q` green on macOS arm64/Intel, Windows x64 and Linux x64. The CI
+  workflow requires the native extension to build, not just fall back.
+- On macOS x86_64, torch is 2.2.2 and needs NumPy 1.x; the platform marker in
+  `pyproject.toml` pins it. Do not replace it with a global NumPy pin.
 - `xdc init`, `xdc coordinator`, `xdc worker`, `xdc train`, `xdc infer` manually exercised.
 - `xdc doctor` shows only truthfully available backends.
 - `git status` contains no keys, tokens, datasets from private users, checkpoints or temporary logs.
