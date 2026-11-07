@@ -215,10 +215,10 @@ class UpdateMeta(BaseModel):
     node_id: str
     base_version: int
     loss: float
-    steps: int
-    tokens: int
-    elapsed_s: float
-    update_norm: float
+    steps: int = Field(ge=1, le=1_000_000)
+    tokens: int = Field(ge=1, le=10**12)
+    elapsed_s: float = Field(ge=0)
+    update_norm: float = Field(ge=0)
     device: str = ""
     compressed: Literal["fp32", "fp16"] = "fp32"
     nonce: str

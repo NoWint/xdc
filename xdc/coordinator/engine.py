@@ -661,18 +661,20 @@ class TrainingEngine:
             raise ValueError("duplicate update")
         if rnd.aggregated:
             raise ValueError("round already aggregated")
-        if node_id in rnd.failed:
-            # The worker was declared lost while its update was still in flight
-            # (common on a loaded/sleeping consumer machine).  The round is still
-            # open and the update is bound to this round/version, so re-admit it
-            # rather than discarding real work.
-            rnd.failed.remove(node_id)
-            rnd.failed_at.pop(node_id, None)
-            job.add_event("info", "late update re-admitted", round=rnd.index, node=node_id)
         if time.time() > rnd.deadline + 5:
             raise ValueError("update arrived after deadline")
         if meta.base_version != rnd.base_version:
             raise ValueError("update base version mismatch")
+        spec = job.spec()
+        expected_tokens = spec.local_steps * spec.batch_size * spec.seq_len
+        if not math.isfinite(meta.loss):
+            raise ValueError("non-finite reported loss")
+        if meta.steps > spec.local_steps:
+            raise ValueError("reported steps exceed the assignment")
+        if meta.tokens > expected_tokens * 2:
+            raise ValueError("reported token count exceeds the assignment")
+        if not math.isfinite(meta.elapsed_s) or not math.isfinite(meta.update_norm):
+            raise ValueError("non-finite training metadata")
         if not body:
             raise ValueError("empty update body")
         from ..model.checkpoint import deserialize_state_bytes
@@ -697,6 +699,14 @@ class TrainingEngine:
         max_allowed = 1e6
         if norm > max_allowed:
             raise ValueError("update norm exceeds safety ceiling")
+        if node_id in rnd.failed:
+            # The worker was declared lost while its update was still in flight
+            # (common on a loaded/sleeping consumer machine).  The round is still
+            # open and the payload is valid, so re-admit it rather than
+            # discarding real work.  Invalid payloads never reach this point.
+            rnd.failed.remove(node_id)
+            rnd.failed_at.pop(node_id, None)
+            job.add_event("info", "late update re-admitted", round=rnd.index, node=node_id)
         update_dir = Path(job.model_path).parent / "updates" / rnd.round_id
         update_dir.mkdir(parents=True, exist_ok=True)
         path = update_dir / f"{node_id}.safetensors"

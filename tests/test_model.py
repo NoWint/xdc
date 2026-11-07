@@ -175,3 +175,31 @@ def test_native_quantize_roundtrip():
     err = np.abs(x - y)
     assert err.max() < 0.05
     assert q.nbytes * 4 == x.nbytes  # int8 codes are 4x smaller than float32
+
+
+def test_update_meta_bounds():
+    from pydantic import ValidationError
+
+    from xdc.protocol import UpdateMeta
+
+    base = dict(
+        job_id="job-1",
+        round_id="rnd-1",
+        node_id="node-1",
+        base_version=0,
+        loss=1.0,
+        steps=4,
+        tokens=512,
+        elapsed_s=1.0,
+        update_norm=0.5,
+        nonce="n",
+    )
+    assert UpdateMeta(**base).tokens == 512
+    for field, value in [
+        ("steps", 0),
+        ("tokens", 0),
+        ("elapsed_s", -1.0),
+        ("update_norm", -1.0),
+    ]:
+        with pytest.raises(ValidationError):
+            UpdateMeta(**{**base, field: value})
