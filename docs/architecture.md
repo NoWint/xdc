@@ -195,6 +195,7 @@ Training and inference are serialized per worker by a compute lock. This is inte
 - Training selects up to `max_workers`; inference selects up to `n_layer` stages and `max_stages`.
 - A node that misses heartbeats is marked offline; a node with invalid updates loses reputation and may be banned.
 - This is resource pooling, not a general-purpose cluster OS: one training assignment at a time per worker, no arbitrary containers, no preemption.
+- Isolation is cooperative: a compute lock serializes training/stage work, `threads` limits PyTorch CPU threads, and `max_inference_sessions` caps KV sessions. `max_memory_mb` limits the capacity advertised to the scheduler; it is not an OS cgroup and does not prevent a process from allocating more.
 
 ## 7. C++ core
 

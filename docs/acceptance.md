@@ -90,6 +90,10 @@ is stage memory distribution, not single-host speed.
   admin bearer → 200, `/metrics` → 200, `/v1/nodes` → 200.
 - `xdc doctor --json` truthfully reports CPU and MPS available; CUDA, ROCm, XPU
   and NPU unavailable with reasons; MLX detected but not used by the engine.
+- Full CLI smoke: `xdc init` → coordinator + two workers → `xdc train` (1 round,
+  512 tokens, completed, loss 5.535 → 4.975) → `xdc jobs` → `xdc infer` (8
+  tokens, 2 stages, `distributed=true`). The dashboard/HTTP endpoints were
+  exercised in the same run.
 
 ## 5. Requirement matrix
 
