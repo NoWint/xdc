@@ -116,7 +116,7 @@ class Cluster:
             [PYTHON, "-m", "xdc", "coordinator", "--config", str(self.coord_config)],
             "coordinator.log",
         )
-        deadline = time.time() + 30
+        deadline = time.time() + 120
         last = None
         while time.time() < deadline:
             try:

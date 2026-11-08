@@ -129,6 +129,25 @@ data/jobs/<job_id>/
 
 `checkpoint_keep` bounds old checkpoint retention. `init_checkpoint_job` initializes a new job from another job's latest checkpoint, enabling continued pretraining/SFT workflows.
 
+### 3.4 Pipeline-parallel training
+
+`Coordinator pipeline engine` (P1) drives one round at a time. It selects
+workers, plans contiguous `[start, end)` layer ranges that fit each worker's
+reported budget, materializes or reuses stage safetensors, and calls
+`pipeline_load`, `pipeline_begin`, `pipeline_forward`, `pipeline_backward`,
+`pipeline_finalize`, `pipeline_export` over the existing tunnel. Hidden states
+and input gradients cross the tunnel as typed fp16/fp32 arrays; parameters,
+optimizer moments and AdamW stay on the stage owner. The coordinator verifies
+stage parameter hashes and atomically replaces the global checkpoint at commit.
+A failed stage triggers `pipeline_abort`, an attempt increment and a re-plan with
+the remaining workers.
+
+The model slice is a self-contained Llama/Qwen implementation; HF keys are
+mapped explicitly and only `config.json`, `tokenizer.json` and safetensors are
+read (never Python model code). Tied heads are derived from the committed
+embedding; LoRA wraps projection modules and freezes every other parameter.
+Full protocol and memory details: [pipeline.md](pipeline.md).
+
 ## 4. Inference: real layer pipeline
 
 ### 4.1 Allocation
@@ -145,7 +164,17 @@ stage 0: tok_emb + pos_emb + blocks[0:2]
 stage 1: blocks[2:4] + norm + head
 ```
 
-### 4.2 Token loop
+### 4.2 Hugging Face path
+
+`InferenceEngine.resolve` accepts `kind: "hf"` jobs. It builds `LlamaConfig` from
+`config.json`, loads only `tokenizer.json`, validates the checkpoint once per
+(path, size, mtime), and caches the resolved model. Stage slices come from the
+training job's latest stage checkpoints when available; otherwise they are
+generated from the global state. `stage_load` applies LoRA after loading the base
+slice. Streaming deltas are produced by incremental detokenization. Non-HF jobs
+keep the byte-tokenizer behavior.
+
+### 4.3 Token loop
 
 ```
 prompt ──▶ stage0 ──hidden──▶ stage1 ──logits──▶ coordinator samples
@@ -161,14 +190,14 @@ prompt ──▶ stage0 ──hidden──▶ stage1 ──logits──▶ coord
 - `stage_sha256` binds each download; the stage token is short-lived and bound to one node.
 - Stage modules are cached by `(sha,start,end)` to reduce repeated time-to-first-token.
 
-### 4.3 Failure and retry
+### 4.4 Failure and retry
 
 - If a tunnel RPC fails, the node is penalized, excluded, and the pipeline is replanned.
 - Non-streaming requests retry from scratch up to 3 times (`allow_retry`), so a failed stage does not poison the result.
 - Streaming requests can restart only before any token has been emitted; otherwise the SSE stream emits an error. This is an honest constraint: emitted bytes cannot be unsent.
 - If only one healthy node remains, the pipeline runs all layers on it and reports `distributed: false`.
 
-### 4.4 Correctness gate
+### 4.5 Correctness gate
 
 Tests compare greedy distributed generation byte-for-byte with monolithic `GPT.generate` on the same checkpoint, including KV-cached decode. This catches layer-slice, position, cache and sampling errors.
 

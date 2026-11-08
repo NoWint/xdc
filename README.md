@@ -4,8 +4,8 @@
 
 **XDC (Xiatian Distributed Compute)** lets ordinary Macs and Windows PCs pool idle CPU/GPU memory and compute to train and run a model **together**. It is not a prompt-forwarding wrapper around one machine's model server.
 
-- **Training:** workers run local AdamW steps on disjoint data shards; the coordinator performs DiLoCo-style periodic pseudo-gradient aggregation with a decoupled quorum, grace window, token weighting and failure-aware commits.
-- **Inference:** a model is split into contiguous layer stages across workers; hidden activations travel through an outbound WebSocket tunnel; KV caches stay on the stage owner; tokens stream back via SSE. Distributed output is tested byte-for-byte against monolithic greedy generation.
+- **Training:** two real modes. DiLoCo workers run local AdamW steps on disjoint shards and the coordinator aggregates pseudo-gradients. Pipeline-parallel workers own contiguous layer ranges, exchange hidden activations through the tunnel, and apply AdamW only to their own parameters; the coordinator assembles the global checkpoint from verified stage uploads.
+- **Inference:** a model is split into contiguous layer stages across workers; hidden activations travel through an outbound WebSocket tunnel; KV caches stay on the stage owner; tokens stream back via SSE. Works for the built-in TinyGPT and for self-contained Llama/Qwen HF safetensors. Distributed output is tested byte-for-byte against monolithic greedy generation.
 - **Heterogeneous:** PyTorch CUDA / ROCm / Intel XPU / Apple MPS / CPU detection with honest fallback and a workload-aware auto policy. Unsupported NPU is reported, not faked.
 - **Network:** coordinator + worker relay. Workers make outbound connections, so NAT-port-forwarding is not required on worker devices.
 - **Security:** Ed25519 node identity, signed HTTP requests with replay protection, TLS with a generated private CA, join/admin tokens, safetensors-only payloads, update validation, reputation and outlier filtering.
@@ -33,6 +33,11 @@
 | Checkpoint save / coordinator restart / resume | working |
 | Worker loss detection + quorum commit / single-node reschedule | working |
 | Two-stage layer-sharded inference with KV cache + SSE | working, exact-monolithic parity |
+| Pipeline-parallel training (Llama/Qwen HF, full fine-tune) | working, exact-monolithic step parity |
+| Self-contained HF `safetensors` loader + tokenizer.json | working; no `trust_remote_code` |
+| LoRA pipeline training and LoRA inference | working; packed 4-bit QLoRA not implemented |
+| Real SmolLM2-135M LoRA pipeline run | working: loss 3.746 → 3.704, 17+13 layers, 2 workers |
+| Real SmolLM2-135M layer-sharded inference | working: 2 stages, text generated on CPU |
 | TLS + signed registration/heartbeat/update | working, tested |
 | C++ native aggregation/sampling/data batches | working, optional |
 | Metrics, dashboard, logs, doctor | working; dashboard HTTP smoke-tested |
@@ -44,10 +49,12 @@
 | Two **physical** devices | not available in this environment — **unverified** |
 | NVIDIA CUDA / AMD ROCm / Intel XPU | code path present, **unverified** hardware |
 | Windows 10/11 physical desktop, Windows arm64 | **unverified** |
-| LoRA / RL / tensor parallelism | **not implemented in v0.1** |
+| LoRA | **implemented** (fp32/fp16 adapters; QLoRA not) |
+| RL / tensor parallelism | **not implemented** |
 | Byzantine fault tolerance | not claimed; 2-worker outlier guard is limited |
 
-Full evidence and caveats: [docs/acceptance.md](docs/acceptance.md).
+Full evidence and caveats: [docs/acceptance.md](docs/acceptance.md). Pipeline
+protocol, memory accounting and limits: [docs/pipeline.md](docs/pipeline.md).
 
 ## Quickstart (macOS / Linux)
 
@@ -83,6 +90,27 @@ xdc infer --config ./xdc-demo/coordinator.yaml \
   --max-tokens 32 --temperature 0
 ```
 
+### Hugging Face model + pipeline
+
+```bash
+# Download config/tokenizer/safetensors only (no Python model code).
+xdc model pull HuggingFaceTB/SmolLM2-135M-Instruct --name smollm2-135m \
+  --config ./xdc-demo/coordinator.yaml
+
+xdc train --config ./xdc-demo/coordinator.yaml \
+  --dataset datasets/tiny_stories.txt --hf-model smollm2-135m \
+  --parallelism pipeline --rounds 2 --batch-size 1 --seq-len 128 \
+  --micro-batches 2 --pipeline-stages 2 --lora-rank 4 \
+  --min-workers 2 --max-workers 2 --wait
+
+xdc infer --config ./xdc-demo/coordinator.yaml \
+  --job-id <job-id> --prompt "Once upon a time" --max-tokens 16 --no-stream
+```
+
+`xdc model add /path/to/model --name local-name` uploads an already-downloaded
+directory. Only `config.json`, `tokenizer*.json`, `generation_config.json`,
+`model.safetensors` and sharded safetensors files are accepted.
+
 Monitor at `http://127.0.0.1:8787/dashboard` (paste the admin token) or `xdc status --config ./xdc-demo/coordinator.yaml`.
 
 ### Windows
@@ -102,6 +130,7 @@ xdc init / coordinator / worker / doctor
 xdc status / nodes / jobs / job / checkpoints
 xdc train / start / pause / cancel / infer / plan
 xdc dataset upload|list
+xdc model list|show|add|pull
 xdc ban / health / monitor
 ```
 

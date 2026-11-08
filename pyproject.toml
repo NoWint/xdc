@@ -44,6 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-timeout>=2.2", "ruff>=0.4"]
+hf = ["transformers>=4.40", "tokenizers>=0.15", "huggingface_hub>=0.23"]
 
 [project.scripts]
 xdc = "xdc.cli:main"

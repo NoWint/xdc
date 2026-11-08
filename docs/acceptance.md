@@ -16,16 +16,31 @@ coordinator aggregates them, parameters change, checkpoints survive a coordinato
 restart, a killed worker is detected and the job completes, and two-stage
 layer-sharded inference matches monolithic greedy generation byte for byte.
 
+Pipeline-parallel training, a self-contained Llama/Qwen HF loader, LoRA pipeline
+training and HF layer-sharded inference were added and verified on this host.
 A **second physical device**, CUDA/ROCm/Intel XPU, physical Windows 10/11
-desktop behavior, Windows arm64, LoRA, RL and tensor parallelism are **not
-verified**. They must not be described as working. See §5.
+desktop behavior, Windows arm64, QLoRA, RL, tensor parallelism, islands and
+intra-node CPU/GPU hybrid stages are **not verified**. See §5.
 
 ## 2. Automated tests
 
 ```text
 $ pytest -q
-20 passed, 10 warnings in 56.81s
+27 passed, 15 warnings
 ```
+
+The P1 pipeline module adds six real-process/unit tests and one inference parity
+test:
+
+| Test | What it proves |
+|---|---|
+| `test_llama_logits_and_gradients_match_transformers` | self-contained Llama matches HF `LlamaForCausalLM` logits and every gradient |
+| `test_stage_files_really_shard_the_model` | three stage files are each smaller than the full checkpoint, parameter counts sum exactly, and composed logits are identical |
+| `test_pipeline_step_matches_monolithic` | one real two-worker pipeline step matches monolithic AdamW within 4e-6 max abs error (fp32 reduction order) |
+| `test_pipeline_tied_head_is_synchronized` | tied global checkpoints omit the duplicate head and the final stage carries a synchronized copy |
+| `test_pipeline_lora_freezes_base_weights` | every base tensor is bitwise unchanged; adapters train; LoRA inference succeeds |
+| `test_hf_pipeline_inference_matches_monolithic` | tokenized HF prompt through two stages + KV cache produces exactly the monolithic greedy text |
+| `test_pipeline_recovers_after_stage_worker_loss` | killing the second-stage owner mid-round leads to abort, one-stage re-plan on the survivor, and completion |
 
 The suite launches real subprocesses with separate identities, ports, data
 directories and caches. It is not an in-process mock.
@@ -83,6 +98,30 @@ Distributed greedy bytes exactly equal monolithic CPU bytes. The distributed
 inference path is slower than one-process CPU for the 0.9M demo model; its value
 is stage memory distribution, not single-host speed.
 
+### 3.1 SmolLM2-135M real pipeline run
+
+`benchmarks/smollm2_135m_pipeline.json` contains the machine-readable record.
+Two real worker processes on one Apple M4, CPU backend, LoRA rank 4:
+
+| Measurement | Result |
+|---|---:|
+| Model | `HuggingFaceTB/SmolLM2-135M-Instruct`, 134,515,008 params, tied embeddings |
+| Stage plan | 17 layers on worker-1 + 13 layers on worker-2 |
+| Round 0 | train 1.9865, val 3.7262, 40.6 s |
+| Round 1 | train 1.9758, val 3.7043, 37.7 s |
+| Stage 0 | 356.7 MB params, 5.5 MB Adam, 2.77 MB grads, 691,968 trainable |
+| Stage 1 | 299.5 MB params, 4.2 MB Adam, 2.12 MB grads, 529,152 trainable |
+| Activation wire | 589,824 bytes per round (fp16 hidden states) |
+| Full-model Adam would have been | ~1.08 GB of optimizer state on one worker |
+| Warm inference | 8 tokens, TTFT 5.86 s, 6.31 s total (CPU, 19+11 layers) |
+| Warm inference after cache | 2.63 s TTFT, 3.13 s total |
+
+The full 134.5M-parameter AdamW optimizer would need
+`2 * 134.5M * 4 bytes = 1.08 GB`. The run sharded it into 5.5 MB + 4.2 MB of
+adapter optimizer state; even full fine-tuning would have split it across two
+processes. The full model file (257 MB) was never loaded by a worker; each
+worker loaded only its 338 MB / 284 MB stage slice.
+
 ## 4. Manual smoke tests
 
 - `xdc init` generated tokens, TLS CA/server certificate, coordinator and worker
@@ -120,10 +159,15 @@ is stage memory distribution, not single-host speed.
 | TLS + signed requests | **verified** | TLS e2e, auth e2e, replay/timestamp unit tests |
 | Shard-only dataset delivery | **verified** | dedicated e2e test |
 | Dashboard | **verified via HTTP smoke test** | served 200; browser interaction not automated |
-| LoRA | **not implemented** | no adapter training or adapter transport |
+| LoRA | **verified** | pipeline adapters train, base weights bitwise unchanged, LoRA inference tested; QLoRA not implemented |
+| Pipeline-parallel full fine-tune | **verified across processes** | exact monolithic AdamW parity, 2 stages, stage-only memory |
+| HF `safetensors` loader / tokenizer.json | **verified** | SmolLM2-135M and Tiny Llama fixtures; no remote code |
+| HF layer-sharded inference | **verified** | SmolLM2 text generated through 2 stages; tiny model exact parity test |
+| Islands / hybrid CPU-GPU stage placement | **not implemented** | future P2 |
 | RL / preference optimization | **not implemented** | no reward model, rollouts or policy-gradient trainer |
 | Tensor parallelism | **not implemented** | pipeline parallelism only |
 | SFT | **basic data path only** | JSONL instruction records are formatted into text and trained with next-token loss; no chat template or prompt-token masking |
+| Pipeline scheduling | **verified** | contiguous stage planning by memory/compute, stage-count reduction after loss, microbatch forward/backward, atomic commit |
 | MLX execution | **detected, not used** | engine runs PyTorch CPU/MPS/CUDA/ROCm/XPU |
 | Public swarm / DHT / hole punching | **not implemented** | coordinator relay only; workers need outbound reachability to it |
 | Byzantine fault tolerance | **not claimed** | norm sanity and median filtering with ≥3 updates; not proof-of-learning or secure aggregation |
@@ -148,7 +192,7 @@ is stage memory distribution, not single-host speed.
 ## 7. Reproduction
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,hf]"
 python setup.py build_ext --inplace
 pytest -q
 python benchmarks/benchmark.py --workdir /tmp/xdc-bench \

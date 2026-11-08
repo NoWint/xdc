@@ -32,7 +32,7 @@ def test_pipeline_matches_monolithic_forward_and_generation():
         hidden = None
         logits = None
         for i, stage in enumerate(stages):
-            hidden, logits = stage(input_ids=prompt if i == 0 else None, hidden=hidden)
+            hidden, logits, _ = stage(input_ids=prompt if i == 0 else None, hidden=hidden)
     assert torch.allclose(ref_logits, logits, atol=1e-6)
 
     # KV-cached greedy generation must match stage-by-stage decoding.
@@ -48,7 +48,7 @@ def test_pipeline_matches_monolithic_forward_and_generation():
             hidden = None
             logits = None
             for i, stage in enumerate(stages):
-                hidden, logits, cache = stage(
+                hidden, logits, cache, _ = stage(
                     input_ids=cond if i == 0 else None,
                     hidden=hidden,
                     past_kv=caches[i],
@@ -77,7 +77,7 @@ def test_noisy_generation_still_matches_with_pipeline():
         h = None
         logits = None
         for i, stage in enumerate([s0, s1]):
-            h, logits = stage(input_ids=prompt if i == 0 else None, hidden=h)
+            h, logits, _ = stage(input_ids=prompt if i == 0 else None, hidden=h)
     assert expected[0, prompt.shape[1]] == logits[:, -1].argmax(-1)[0]
 
 

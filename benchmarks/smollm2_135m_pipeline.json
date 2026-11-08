@@ -1,0 +1,235 @@
+{
+  "recorded_at": "2026-11-08T13:00:11+0800",
+  "host": {
+    "machine": "MacBook-Air.local",
+    "chip": "Apple M4",
+    "cpu_count": 10,
+    "total_memory_mb": 16384,
+    "backend": "cpu",
+    "workers": 2,
+    "note": "both workers are processes on one physical host"
+  },
+  "model": {
+    "repo": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "parameters": 134515008,
+    "layers": 30,
+    "tied_embeddings": true,
+    "checkpoint_bytes": 269060552
+  },
+  "training": {
+    "job_id": "job-fd4b644247d3",
+    "state": "completed",
+    "version": 2,
+    "parallelism": "pipeline",
+    "lora_rank": 4,
+    "lora_alpha": 8.0,
+    "rounds": 2,
+    "batch_size": 1,
+    "seq_len": 128,
+    "micro_batches": 2,
+    "lr": 0.0002,
+    "activation_dtype": "fp16",
+    "initial_loss": 3.7463788986206055,
+    "final_loss": 3.7043179273605347,
+    "tokens_trained": 512,
+    "stage_plan": [
+      {
+        "stage_index": 0,
+        "node_id": "node-c01e56be9e6d2067f29c25b7",
+        "node_name": "worker-1",
+        "layer_start": 0,
+        "layer_end": 17,
+        "parameters": 89185152,
+        "trainable_parameters": 691968,
+        "estimated_bytes": 459254400,
+        "device": "cpu",
+        "backend": "cpu",
+        "measured_param_bytes": 356740608,
+        "measured_optimizer_bytes": 5536696,
+        "measured_total_bytes": 365045176,
+        "cached": true,
+        "measured_grad_bytes": 2767872,
+        "measured_parameters": 89185152,
+        "grad_norm": 0.36085237655069174
+      },
+      {
+        "stage_index": 1,
+        "node_id": "node-c709ef06242c1428e0927112",
+        "node_name": "worker-2",
+        "layer_start": 17,
+        "layer_end": 30,
+        "parameters": 74862528,
+        "trainable_parameters": 529152,
+        "estimated_bytes": 385199040,
+        "device": "cpu",
+        "backend": "cpu",
+        "measured_param_bytes": 299450112,
+        "measured_optimizer_bytes": 4233944,
+        "measured_total_bytes": 305800664,
+        "cached": false,
+        "measured_grad_bytes": 2116608,
+        "measured_parameters": 74862528,
+        "grad_norm": 0.255443518513327
+      }
+    ],
+    "metrics": [
+      {
+        "round": 0,
+        "version": 1,
+        "workers": [
+          "node-c01e56be9e6d2067f29c25b7",
+          "node-c709ef06242c1428e0927112"
+        ],
+        "updates_received": 2,
+        "updates_used": 2,
+        "train_loss": 1.986469566822052,
+        "val_loss": 3.726229429244995,
+        "tokens": 256,
+        "micro_batches": 2,
+        "stages": 2,
+        "activation_bytes": 589824,
+        "round_wall_s": 40.634008169174194,
+        "stage_metrics": [
+          {
+            "stage_index": 0,
+            "version": 1,
+            "grad_norm": 0.3428730176935293,
+            "loss": 0.0,
+            "tokens": 256,
+            "activation_bytes": 294912,
+            "param_bytes": 356740608,
+            "optimizer_bytes": 5536696,
+            "grad_bytes": 2767872,
+            "trainable_parameters": 691968,
+            "parameters": 89185152,
+            "device": "cpu",
+            "param_hash": "ae68bb3b38aa651222d9adf24ace0559ccd96a84e23bd47a6fdffc59daad111c",
+            "elapsed_s": 3.458411931991577
+          },
+          {
+            "stage_index": 1,
+            "version": 1,
+            "grad_norm": 0.26056713234910406,
+            "loss": 1.986469566822052,
+            "tokens": 0,
+            "activation_bytes": 294912,
+            "param_bytes": 299450112,
+            "optimizer_bytes": 4233944,
+            "grad_bytes": 2116608,
+            "trainable_parameters": 529152,
+            "parameters": 74862528,
+            "device": "cpu",
+            "param_hash": "f6999541d909a7344757ef753f0b25391af7b2cae2f060d5b4fbc09ea28a9cf9",
+            "elapsed_s": 3.4026172161102295
+          }
+        ],
+        "stage_parameters": [
+          89185152,
+          74862528
+        ],
+        "stage_measured_bytes": [
+          365045176,
+          305800664
+        ],
+        "optimizer_sharded": true,
+        "parallelism": "pipeline",
+        "timestamp": 1794110302.407493
+      },
+      {
+        "round": 1,
+        "version": 2,
+        "workers": [
+          "node-c01e56be9e6d2067f29c25b7",
+          "node-c709ef06242c1428e0927112"
+        ],
+        "updates_received": 2,
+        "updates_used": 2,
+        "train_loss": 1.9758201837539673,
+        "val_loss": 3.7043179273605347,
+        "tokens": 256,
+        "micro_batches": 2,
+        "stages": 2,
+        "activation_bytes": 589824,
+        "round_wall_s": 37.740421295166016,
+        "stage_metrics": [
+          {
+            "stage_index": 0,
+            "version": 2,
+            "grad_norm": 0.36085237655069174,
+            "loss": 0.0,
+            "tokens": 256,
+            "activation_bytes": 294912,
+            "param_bytes": 356740608,
+            "optimizer_bytes": 5536696,
+            "grad_bytes": 2767872,
+            "trainable_parameters": 691968,
+            "parameters": 89185152,
+            "device": "cpu",
+            "param_hash": "bf4138fce61a7094aa3703f055fa7a7ce7dabeac38e2e292e47cae8a7755df97",
+            "elapsed_s": 7.738840103149414
+          },
+          {
+            "stage_index": 1,
+            "version": 2,
+            "grad_norm": 0.255443518513327,
+            "loss": 1.9758201837539673,
+            "tokens": 0,
+            "activation_bytes": 294912,
+            "param_bytes": 299450112,
+            "optimizer_bytes": 4233944,
+            "grad_bytes": 2116608,
+            "trainable_parameters": 529152,
+            "parameters": 74862528,
+            "device": "cpu",
+            "param_hash": "6b20686aeffb8e802aec5aa9c580286ea1fd9af34fc6c120a26cf7b171ec7dfd",
+            "elapsed_s": 7.525810718536377
+          }
+        ],
+        "stage_parameters": [
+          89185152,
+          74862528
+        ],
+        "stage_measured_bytes": [
+          365045176,
+          305800664
+        ],
+        "optimizer_sharded": true,
+        "parallelism": "pipeline",
+        "timestamp": 1794110340.366723
+      }
+    ]
+  },
+  "inference": {
+    "checkpoint": "jobs/job-fd4b644247d3/checkpoints/v00002.safetensors",
+    "runtime_s_note": "warm coordinator cache; CPU stages 19+11 layers",
+    "tokens": 8,
+    "first_token_ms": 5861.5562499908265,
+    "total_ms": 6309.444124985021,
+    "text": ", I was a young man, a",
+    "stages": [
+      {
+        "stage": 0,
+        "node_id": "node-d124d66bc224f2df36e52979",
+        "node_name": "worker-2",
+        "backend": "cpu",
+        "device": "cpu",
+        "layer_start": 0,
+        "layer_end": 19,
+        "layers": 19
+      },
+      {
+        "stage": 1,
+        "node_id": "node-fce582162b3e694a3fc4577f",
+        "node_name": "worker-1",
+        "backend": "cpu",
+        "device": "cpu",
+        "layer_start": 19,
+        "layer_end": 30,
+        "layers": 11
+      }
+    ]
+  },
+  "reproduction": {
+    "command": "python benchmarks/smollm2_pipeline.py --model-dir /path/to/SmolLM2-135M-Instruct"
+  }
+}
