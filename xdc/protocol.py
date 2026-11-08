@@ -98,7 +98,8 @@ class DatasetInfo(BaseModel):
 
 
 class TrainingSpec(BaseModel):
-    algorithm: Literal["diloco", "diloco_decoupled"] = "diloco_decoupled"
+    algorithm: Literal["diloco", "diloco_decoupled", "pipeline"] = "diloco_decoupled"
+    parallelism: Literal["diloco", "pipeline"] = "diloco"
     rounds: int = Field(20, ge=1, le=100000)
     local_steps: int = Field(20, ge=1, le=100000)
     batch_size: int = Field(4, ge=1, le=4096)
@@ -121,6 +122,15 @@ class TrainingSpec(BaseModel):
     compression: Literal["fp32", "fp16"] = "fp16"
     max_update_norm_ratio: float = Field(4.0, gt=0)
     mode: Literal["pretrain", "sft"] = "pretrain"
+    # Pipeline-parallel training.  One optimizer step per round over
+    # ``micro_batches`` activation microbatches.
+    micro_batches: int = Field(4, ge=1, le=256)
+    pipeline_stages: int = Field(0, ge=0, le=64)
+    activation_dtype: Literal["fp32", "fp16"] = "fp32"
+    lora_rank: int = Field(0, ge=0, le=256)
+    lora_alpha: float = Field(0.0, ge=0)
+    island: str | None = None
+    stage_memory_headroom: float = Field(1.25, ge=1.0, le=8.0)
 
     @field_validator("max_workers")
     @classmethod
@@ -132,6 +142,12 @@ class TrainingSpec(BaseModel):
             raise ValueError("min_workers cannot exceed max_workers")
         if self.eval_every < 0:
             raise ValueError("eval_every must be >= 0")
+        if self.parallelism == "pipeline" and self.algorithm != "pipeline":
+            object.__setattr__(self, "algorithm", "pipeline")
+        if self.parallelism == "diloco" and self.algorithm == "pipeline":
+            object.__setattr__(self, "parallelism", "pipeline")
+        if self.lora_rank and self.lora_alpha <= 0:
+            object.__setattr__(self, "lora_alpha", float(self.lora_rank * 2))
 
 
 class JobCreate(BaseModel):
@@ -177,6 +193,12 @@ class JobView(BaseModel):
     tokens_trained: int = 0
     parameters: int = 0
     traceback: str | None = None
+    model_kind: str = "tinygpt"
+    model_dir: str | None = None
+    tokenizer: dict[str, Any] = Field(default_factory=dict)
+    stage_plan: list[dict[str, Any]] = Field(default_factory=list)
+    stage_checkpoints: dict[str, Any] = Field(default_factory=dict)
+
 
 
 class Assignment(BaseModel):
@@ -207,6 +229,66 @@ class Assignment(BaseModel):
     max_update_norm_ratio: float
     deadline: float
     compression: Literal["fp32", "fp16"] = "fp16"
+
+
+class PipelineStagePlan(BaseModel):
+    stage_index: int
+    node_id: str
+    node_name: str = ""
+    layer_start: int
+    layer_end: int
+    stage_path: str = ""
+    stage_sha256: str = ""
+    optimizer_path: str | None = None
+    optimizer_sha256: str | None = None
+    estimated_bytes: int = 0
+    parameters: int = 0
+    trainable_parameters: int = 0
+    device: str = ""
+    param_bytes: int = 0
+    optimizer_bytes: int = 0
+    grad_bytes: int = 0
+    measured_total_bytes: int = 0
+
+
+class PipelineAssignment(BaseModel):
+    """Direct tunnel assignment for one pipeline stage.
+
+    Pipeline rounds are coordinator-driven RPC, not polled HTTP assignments; this
+    model documents the plan exchanged with the worker and is stored in the job
+    view for inspection.
+    """
+
+    type: Literal["pipeline_stage"] = "pipeline_stage"
+    job_id: str
+    job_name: str
+    round_id: str
+    round_index: int
+    base_version: int
+    stage_index: int
+    num_stages: int
+    layer_start: int
+    layer_end: int
+    model_spec: dict[str, Any] = Field(default_factory=dict)
+    model_kind: str = "hf"
+    stage_path: str
+    stage_sha256: str
+    optimizer_path: str | None = None
+    optimizer_sha256: str | None = None
+    micro_batches: int
+    batch_size: int
+    seq_len: int
+    lr: float
+    weight_decay: float
+    grad_clip: float
+    seed: int
+    deadline: float
+    activation_dtype: Literal["fp32", "fp16"] = "fp32"
+    lora_rank: int = 0
+    lora_alpha: float = 0.0
+    island: str | None = None
+    tokenizer: dict[str, Any] = Field(default_factory=dict)
+    estimated_bytes: int = 0
 
 
 class UpdateMeta(BaseModel):

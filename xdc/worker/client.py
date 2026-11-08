@@ -86,11 +86,18 @@ class SigningClient:
         self._raise(resp)
         return resp.json()
 
-    async def post_raw(self, path: str, body: bytes, extra_headers: dict[str, str] | None = None) -> dict[str, Any]:
+    async def post_raw(
+        self,
+        path: str,
+        body: bytes,
+        extra_headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         headers = self._headers("POST", path, body)
         if extra_headers:
             headers.update(extra_headers)
-        resp = await self.client.post(path, content=body, headers=headers)
+        extra = {} if timeout is None else {"timeout": timeout}
+        resp = await self.client.post(path, content=body, headers=headers, **extra)
         self._raise(resp)
         return resp.json()
 

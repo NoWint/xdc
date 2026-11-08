@@ -268,7 +268,7 @@ class PipelineStage(nn.Module):
         if missing or unexpected:
             raise ValueError(f"bad pipeline state slice: missing={missing}, unexpected={unexpected}")
 
-    def forward(
+    def forward_features(
         self,
         input_ids: Optional[torch.Tensor] = None,
         hidden: Optional[torch.Tensor] = None,
@@ -293,10 +293,38 @@ class PipelineStage(nn.Module):
             pk = past_kv[i] if past_kv is not None else None
             x, present = block(x, past_kv=pk, use_cache=use_cache)
             presents.append(present)
+        return x, presents
+
+    def head_logits(self, hidden: torch.Tensor) -> torch.Tensor:
+        if not self.is_last:
+            raise ValueError("only the final stage has an LM head")
+        return self.head(self.norm(hidden))
+
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        hidden: Optional[torch.Tensor] = None,
+        past_kv=None,
+        pos_offset: int = 0,
+        use_cache: bool = False,
+        targets: Optional[torch.Tensor] = None,
+        loss_scale: float = 1.0,
+    ):
+        x, presents = self.forward_features(
+            input_ids=input_ids,
+            hidden=hidden,
+            past_kv=past_kv,
+            pos_offset=pos_offset,
+            use_cache=use_cache,
+        )
         logits = None
+        loss = None
         if self.is_last:
-            x = self.norm(x)
-            logits = self.head(x)
+            logits = self.head_logits(x)
+            if targets is not None:
+                loss = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)), targets.reshape(-1)
+                ) * loss_scale
         if use_cache:
-            return x, logits, presents
-        return x, logits
+            return x, logits, presents, loss
+        return x, logits, loss

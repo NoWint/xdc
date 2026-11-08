@@ -46,10 +46,13 @@ class CoordinatorConfig:
     job_tick_s: float = 0.5
     max_upload_mb: int = 512
     max_dataset_mb: int = 512
+    max_model_upload_mb: int = 4096
     eval_device: str = "cpu"
     log_level: str = "INFO"
     checkpoint_keep: int = 20
     trust_proxy_headers: bool = False
+    pipeline_memory_fraction: float = 0.7
+    pipeline_reserve_mb: int = 512
     tls: TLSConfig = field(default_factory=TLSConfig)
 
     @classmethod

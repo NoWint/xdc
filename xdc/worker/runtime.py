@@ -17,10 +17,13 @@ import torch
 from ..config import WorkerConfig
 from ..model.checkpoint import load_state, serialize_state_bytes
 from ..model.gpt import GPT, ModelConfig, PipelineStage
+from ..model.llama import LlamaStage
+from ..model.registry import apply_lora_if_requested, model_config, model_kind
 from ..model.train import set_thread_count, train_local
 from ..protocol import Assignment, Capabilities, UpdateMeta
 from ..tensorwire import decode_array, encode_array
 from .client import ApiError, SigningClient
+from .pipeline import PipelineRunner
 
 log = logging.getLogger("xdc.worker.runtime")
 
@@ -59,6 +62,7 @@ class WorkerRuntime:
         self._mps = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
         self._cuda = torch.cuda.is_available()
         self._xpu = bool(getattr(torch, "xpu", None) and torch.xpu.is_available())
+        self.pipeline = PipelineRunner(self, cache_dir)
 
     def device_for(self, params: int) -> torch.device:
         """Choose an execution device honestly.
@@ -179,25 +183,40 @@ class WorkerRuntime:
 
     # ------------------------------------------------------------------ inference RPC
     async def stage_load(self, payload: dict[str, Any]) -> dict[str, Any]:
-        cfg = ModelConfig.from_dict(payload["model_spec"])
+        kind = str(payload.get("model_kind") or model_kind(payload["model_spec"]))
+        cfg = model_config(payload["model_spec"])
         start = int(payload["layer_start"])
         end = int(payload["layer_end"])
         sha = str(payload["stage_sha256"])
         url = str(payload["stage_url"])
+        lora_rank = int(payload.get("lora_rank", 0))
+        lora_alpha = float(payload.get("lora_alpha", 0.0))
         dest = self.cache_dir / "stages" / f"{sha}.safetensors"
         await self.client.download(url, sha, dest)
         session_id = str(payload["session_id"])
         stage_index = int(payload["stage_index"])
 
-        cache_key = f"{sha}:{start}:{end}"
+        cache_key = f"{sha}:{start}:{end}:{kind}:{lora_rank}:{lora_alpha}"
 
         def load():
             cached = self.stage_cache.get(cache_key)
             if cached is not None:
                 return cached, str(next(cached.parameters()).device)
             state = load_state(dest)
-            stage = PipelineStage(cfg, start, end)
-            stage.load_state_dict(state, strict=True)
+            base_state = {k: v for k, v in state.items() if "lora_" not in k}
+            if kind == "hf":
+                stage = LlamaStage(cfg, start, end)  # type: ignore[arg-type]
+            else:
+                stage = PipelineStage(cfg, start, end)  # type: ignore[arg-type]
+            stage.load_state_dict(base_state, strict=True)
+            adapted = apply_lora_if_requested(stage, lora_rank, lora_alpha)
+            if adapted:
+                missing, unexpected = stage.load_state_dict(state, strict=False)
+                missing = [k for k in missing if "lora_" not in k]
+                if missing or unexpected:
+                    raise ValueError(
+                        f"bad LoRA inference stage: missing={missing[:8]} unexpected={unexpected[:8]}"
+                    )
             device = self.device_for(sum(p.numel() for p in stage.parameters()))
             stage.to(device).eval()
             self.stage_cache[cache_key] = stage
@@ -252,7 +271,7 @@ class WorkerRuntime:
                     pos_offset=pos_offset,
                     use_cache=use_cache,
                 )
-                hidden_out, logits, presents = out
+                hidden_out, logits, presents, _loss = out
                 session.cache = presents
                 session.last_used = time.time()
                 result = {}
@@ -292,6 +311,8 @@ class WorkerRuntime:
     def release_all(self) -> None:
         self.sessions.clear()
         self.stage_cache.clear()
+        for job_id in list(self.pipeline.sessions):
+            self.pipeline.release({"job_id": job_id})
         if self.device.type == "mps":
             try:
                 torch.mps.empty_cache()
@@ -307,6 +328,24 @@ class WorkerRuntime:
             return await self.stage_forward(payload)
         if method == "stage_release":
             return await self.stage_release(payload)
+        if method == "pipeline_load":
+            return await self.pipeline.load(payload)
+        if method == "pipeline_begin":
+            return self.pipeline.begin(payload)
+        if method == "pipeline_forward":
+            return self.pipeline.forward(payload)
+        if method == "pipeline_backward":
+            return self.pipeline.backward(payload)
+        if method == "pipeline_finalize":
+            return self.pipeline.finalize(payload)
+        if method == "pipeline_export":
+            return await self.pipeline.export(payload)
+        if method == "pipeline_abort":
+            return await self.pipeline.abort(payload)
+        if method == "pipeline_status":
+            return self.pipeline.status(payload)
+        if method == "pipeline_release":
+            return self.pipeline.release(payload)
         if method == "status":
             return {
                 "node_id": self.client.identity.node_id,
@@ -314,6 +353,7 @@ class WorkerRuntime:
                 "device": self.caps.device_name,
                 "training": self.training,
                 "sessions": len(self.sessions),
+                "pipeline_sessions": len(self.pipeline.sessions),
                 "last_error": self.last_error,
             }
         raise ValueError(f"unknown RPC method {method}")
