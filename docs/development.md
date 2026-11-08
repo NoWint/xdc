@@ -24,7 +24,7 @@ benchmarks/benchmark.py  single vs multi comparison
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,hf]"
 python setup.py build_ext --inplace
 python -m pytest -q -m "not e2e"
 ```
@@ -38,9 +38,13 @@ The native extension is optional. `xdc.native.AVAILABLE` is false if compilation
 - `tests/test_crypto.py`: identity, signatures, replay, TLS material.
 - `tests/test_model.py`: monolithic/pipeline equivalence, KV-cache generation, checkpoints, FP16 compression, native/Python aggregation parity, outlier rejection, local training, data split.
 - `tests/test_e2e.py`: real coordinator + two worker subprocesses, two-worker training, exact distributed inference, checkpoints, coordinator restart/resume, worker kill/failure, TLS, auth.
+- `tests/test_pipeline.py`: Llama/HF parity, stage slicing, pipeline AdamW vs monolithic, tied heads, LoRA, HF inference parity, worker-loss recovery, MPS+CPU hybrid, island blocks.
 - `tests/conftest.py`: `Cluster` harness (free port, generated tokens, subprocess lifecycle, log capture, API helpers).
 
 The e2e tests use separate CPU workers so they are deterministic and do not require MPS. They run on Windows/macOS/Linux in CI. Tests that need unavailable hardware are skipped or explicitly marked unverified in the acceptance report.
+
+Step-by-step manual/e2e/HF/pipeline test guide (中文):
+[testing-tutorial.md](testing-tutorial.md).
 
 Useful commands:
 
@@ -64,13 +68,14 @@ When an e2e test fails, the `Cluster` harness has already written `coordinator.l
 
 ## 5. Adding a model
 
-The v0.1 pipeline assumes a small decoder-only causal LM with contiguous layer slices and per-stage KV caches. To add another architecture:
+The pipeline assumes a decoder-only causal LM with contiguous layer slices and per-stage KV caches. To add another architecture:
 
 1. Provide a `PipelineStage`-compatible module with `layer_start/layer_end`, `layer_keys`, `load_global_state`, and `forward(input_ids|hidden, past_kv, pos_offset, use_cache)`.
-2. Keep state-dict keys stable across monolithic and stage modules.
+2. Keep state-dict keys stable across monolithic and stage modules. For HF safetensors, add an explicit `global_key` / `layer_state` mapping and a `full_state` loader that rejects unexpected tensors.
 3. Add monolithic/pipeline equivalence tests against greedy generation.
-4. Ensure the tokenizer is byte-level or send tokenizer metadata in the assignment. XDC currently uses UTF-8 bytes directly (vocab 256).
-5. Update `ModelConfig` validation and documentation.
+4. Register the architecture in `xdc/model/registry.py`; add a `config.json` parser and a `tokenizer.json` tokenizer adapter. The engine supports both the built-in byte tokenizer and HF `tokenizers`.
+5. Reject unsupported features explicitly (e.g. `rope_scaling`, quantization formats, remote code) instead of producing wrong logits.
+6. Update `ModelConfig` / `LlamaConfig` validation and documentation.
 
 ## 6. Altering the training algorithm
 

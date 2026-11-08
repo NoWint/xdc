@@ -57,6 +57,7 @@
 
 Full evidence and caveats: [docs/acceptance.md](docs/acceptance.md). Pipeline
 protocol, memory accounting and limits: [docs/pipeline.md](docs/pipeline.md).
+Step-by-step testing guide (中文): [docs/testing-tutorial.md](docs/testing-tutorial.md).
 
 ## Quickstart (macOS / Linux)
 
