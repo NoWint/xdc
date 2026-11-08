@@ -27,7 +27,14 @@ def free_port() -> int:
 
 
 class Cluster:
-    def __init__(self, root: Path, tls: bool = False, workers: int = 2):
+    def __init__(
+        self,
+        root: Path,
+        tls: bool = False,
+        workers: int = 2,
+        backends: dict[str, str] | None = None,
+        labels: dict[str, dict[str, str]] | None = None,
+    ):
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         self.tls = tls
@@ -77,7 +84,8 @@ class Cluster:
                     "join_token": self.join_token,
                     "data_dir": str(root / name),
                     "name": name,
-                    "backend": "cpu",
+                    "backend": (backends or {}).get(name, "cpu"),
+                    "labels": (labels or {}).get(name, {}),
                     "threads": 2,
                     "heartbeat_interval_s": 1.0,
                     "poll_interval_s": 0.15,

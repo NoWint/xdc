@@ -14,6 +14,7 @@ from xdc.model.checkpoint import load_state
 from xdc.model.hf import SafetensorStore, write_stage_file
 from xdc.model.llama import LlamaConfig, LlamaModel, LlamaStage
 from xdc.model.tokenizer import read_tokens, sample_token_batch
+from tests.conftest import Cluster
 from tests.hf_fixture import build_tiny_hf
 
 
@@ -40,6 +41,8 @@ def _create_pipeline_job(
     lora_rank: int = 0,
     min_workers: int = 2,
     max_workers: int = 2,
+    pipeline_stages: int = 2,
+    island: str | None = None,
 ) -> dict:
     body = {
         "name": "pipeline-test",
@@ -57,12 +60,13 @@ def _create_pipeline_job(
             "grad_clip": grad_clip,
             "min_workers": min_workers,
             "max_workers": max_workers,
-            "pipeline_stages": 2,
+            "pipeline_stages": pipeline_stages,
             "eval_every": eval_every,
             "eval_batches": 2,
             "round_timeout_s": 60,
             "seed": 7,
             "lora_rank": lora_rank,
+            "island": island,
         },
         "auto_start": True,
     }
@@ -164,6 +168,7 @@ def tiny_model(tmp_path_factory):
     return dest
 
 
+@pytest.mark.e2e
 def test_pipeline_step_matches_monolithic(cluster, corpus, tiny_model):
     _copy_model(cluster, tiny_model)
     dataset = cluster.upload_dataset(corpus, "pipeline-exact")
@@ -216,6 +221,7 @@ def test_pipeline_step_matches_monolithic(cluster, corpus, tiny_model):
     assert sum(s["param_bytes"] for s in metric["stage_metrics"]) < 2 * full_param_bytes
 
 
+@pytest.mark.e2e
 def test_pipeline_tied_head_is_synchronized(cluster, corpus, tmp_path):
     tied = tmp_path / "tied"
     build_tiny_hf(tied, layers=4, hidden=64, tied=True)
@@ -243,6 +249,7 @@ def test_pipeline_tied_head_is_synchronized(cluster, corpus, tmp_path):
     assert job["metrics"][-1]["val_loss"] is not None
 
 
+@pytest.mark.e2e
 def test_pipeline_lora_freezes_base_weights(cluster, corpus, tiny_model):
     _copy_model(cluster, tiny_model)
     dataset = cluster.upload_dataset(corpus, "pipeline-lora")
@@ -263,6 +270,7 @@ def test_pipeline_lora_freezes_base_weights(cluster, corpus, tiny_model):
 
 
 @pytest.mark.slow
+@pytest.mark.e2e
 def test_pipeline_recovers_after_stage_worker_loss(cluster, corpus, tiny_model):
     _copy_model(cluster, tiny_model)
     dataset = cluster.upload_dataset(corpus, "pipeline-failure")
@@ -318,6 +326,7 @@ def test_pipeline_recovers_after_stage_worker_loss(cluster, corpus, tiny_model):
     assert any(len(m.get("stage_metrics", [])) == 1 for m in job["metrics"])
 
 
+@pytest.mark.e2e
 def test_hf_pipeline_inference_matches_monolithic(cluster, corpus, tiny_model):
     _copy_model(cluster, tiny_model)
     dataset = cluster.upload_dataset(corpus, "pipeline-infer")
@@ -352,3 +361,106 @@ def test_hf_pipeline_inference_matches_monolithic(cluster, corpus, tiny_model):
     assert out["text"] == expected
     assert out["distributed"] is True
     assert len(out["stages"]) == 2
+
+
+@pytest.mark.slow
+@pytest.mark.e2e
+def test_hybrid_mps_cpu_pipeline(tmp_path, corpus):
+    if not (getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()):
+        pytest.skip("MPS not available")
+    model_dir = tmp_path / "tiny-hf"
+    build_tiny_hf(model_dir, layers=4, hidden=64)
+    c = Cluster(
+        tmp_path / "hybrid-cluster",
+        workers=2,
+        backends={"worker-1": "mps", "worker-2": "cpu"},
+    )
+    try:
+        c.start_coordinator()
+        c.start_workers()
+        _copy_model(c, model_dir)
+        dataset = c.upload_dataset(corpus, "hybrid")
+        job = _create_pipeline_job(c, dataset, eval_every=1)
+        assert job["state"] == "completed", job.get("error")
+        devices = {s["device"] for s in job["metrics"][-1]["stage_metrics"]}
+        assert devices == {"mps", "cpu"}
+        assert job["final_loss"] is not None
+        out = c.infer(job["job_id"], "the cat", max_tokens=4, stream=False)
+        assert out["tokens"] == 4
+        assert {s["backend"] for s in out["stages"]} == {"mps", "cpu"}
+    finally:
+        c.cleanup()
+
+
+@pytest.mark.slow
+@pytest.mark.e2e
+def test_island_placement_constraint_and_inference(tmp_path, corpus):
+    model_dir = tmp_path / "tiny-hf"
+    build_tiny_hf(model_dir, layers=4, hidden=64)
+    c = Cluster(
+        tmp_path / "island-cluster",
+        workers=2,
+        labels={
+            "worker-1": {"island": "island-a"},
+            "worker-2": {"island": "island-b"},
+        },
+    )
+    try:
+        c.start_coordinator()
+        c.start_workers()
+        _copy_model(c, model_dir)
+        dataset = c.upload_dataset(corpus, "island")
+        job = _create_pipeline_job(
+            c,
+            dataset,
+            min_workers=1,
+            max_workers=2,
+            island="island-a",
+        )
+        assert job["state"] == "completed", job.get("error")
+        assert len(job["stage_plan"]) == 1
+        assert {s["node_name"] for s in job["stage_plan"]} == {"worker-1"}
+        out = c.infer(job["job_id"], "the cat", max_tokens=3, stream=False)
+        assert out["tokens"] == 3
+        assert {s["node_name"] for s in out["stages"]} == {"worker-1"}
+    finally:
+        c.cleanup()
+
+
+@pytest.mark.slow
+@pytest.mark.e2e
+def test_island_blocks_minimize_cross_island_hops(tmp_path, corpus):
+    model_dir = tmp_path / "tiny-hf"
+    build_tiny_hf(model_dir, layers=4, hidden=64)
+    c = Cluster(
+        tmp_path / "island-block-cluster",
+        workers=4,
+        labels={
+            "worker-1": {"island": "a"},
+            "worker-2": {"island": "b"},
+            "worker-3": {"island": "a"},
+            "worker-4": {"island": "b"},
+        },
+    )
+    try:
+        c.start_coordinator()
+        c.start_workers()
+        _copy_model(c, model_dir)
+        dataset = c.upload_dataset(corpus, "island-blocks")
+        job = _create_pipeline_job(
+            c,
+            dataset,
+            min_workers=4,
+            max_workers=4,
+            pipeline_stages=4,
+        )
+        assert job["state"] == "completed", job.get("error")
+        islands = [s["island"] for s in job["stage_plan"]]
+        assert len(islands) == 4
+        assert sum(a != b for a, b in zip(islands, islands[1:])) <= 1
+        assert job["metrics"][-1]["island_hops"] <= 1
+        out = c.infer(job["job_id"], "the cat", max_tokens=3, stream=False)
+        infer_islands = [s["island"] for s in out["stages"]]
+        assert sum(a != b for a, b in zip(infer_islands, infer_islands[1:])) <= 1
+    finally:
+        c.cleanup()

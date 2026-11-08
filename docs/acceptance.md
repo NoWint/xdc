@@ -26,7 +26,7 @@ intra-node CPU/GPU hybrid stages are **not verified**. See §5.
 
 ```text
 $ pytest -q
-27 passed, 15 warnings
+30 passed, 15 warnings
 ```
 
 The P1 pipeline module adds six real-process/unit tests and one inference parity
@@ -41,6 +41,9 @@ test:
 | `test_pipeline_lora_freezes_base_weights` | every base tensor is bitwise unchanged; adapters train; LoRA inference succeeds |
 | `test_hf_pipeline_inference_matches_monolithic` | tokenized HF prompt through two stages + KV cache produces exactly the monolithic greedy text |
 | `test_pipeline_recovers_after_stage_worker_loss` | killing the second-stage owner mid-round leads to abort, one-stage re-plan on the survivor, and completion |
+| `test_hybrid_mps_cpu_pipeline` | stage 0 on Metal, stage 1 on CPU; both train, evaluate and serve inference |
+| `test_island_placement_constraint_and_inference` | a pinned job and its inference never leave the requested island |
+| `test_island_blocks_minimize_cross_island_hops` | 4 workers in 2 islands produce a contiguous island block and `island_hops <= 1` |
 
 The suite launches real subprocesses with separate identities, ports, data
 directories and caches. It is not an in-process mock.
@@ -122,6 +125,24 @@ adapter optimizer state; even full fine-tuning would have split it across two
 processes. The full model file (257 MB) was never loaded by a worker; each
 worker loaded only its 338 MB / 284 MB stage slice.
 
+### 3.2 Hybrid MPS + CPU SmolLM2 run
+
+`benchmarks/smollm2_135m_hybrid.json`. One worker process used Metal (MPS), the
+other CPU; the stage planner put 18 layers on MPS and 12 on CPU:
+
+| Measurement | Result |
+|---|---:|
+| Initial / final val loss | 3.7625 → 3.7446 |
+| Tokens | 256 |
+| End-to-end wall | 43.5 s |
+| MPS stage | 371.1 MB params, 5.86 MB Adam, 18 layers |
+| CPU stage | 285.1 MB params, 3.91 MB Adam, 12 layers |
+| Inference | 8 tokens; 17.95 s first token (cold stage generation + MPS warmup) |
+| Inference stages | 16 layers MPS + 14 layers CPU |
+
+This proves a real heterogeneous device path across processes. It does **not**
+prove inter-node GPU speedup or WAN island latency.
+
 ## 4. Manual smoke tests
 
 - `xdc init` generated tokens, TLS CA/server certificate, coordinator and worker
@@ -163,7 +184,8 @@ worker loaded only its 338 MB / 284 MB stage slice.
 | Pipeline-parallel full fine-tune | **verified across processes** | exact monolithic AdamW parity, 2 stages, stage-only memory |
 | HF `safetensors` loader / tokenizer.json | **verified** | SmolLM2-135M and Tiny Llama fixtures; no remote code |
 | HF layer-sharded inference | **verified** | SmolLM2 text generated through 2 stages; tiny model exact parity test |
-| Islands / hybrid CPU-GPU stage placement | **not implemented** | `island` only filters nodes by label today; no block-boundary routing or intra-node CPU/GPU split |
+| Island-aware placement | **verified across processes** | label pinning; contiguous island blocks with `island_hops <= 1`; inference honours the same constraint. WAN routing/latency probing not implemented |
+| Hybrid CPU/GPU stage placement | **verified across processes** | SmolLM2 stage 0 on MPS, stage 1 on CPU; devices reported in metrics and inference views. One process cannot host two stages |
 | RL / preference optimization | **not implemented** | no reward model, rollouts or policy-gradient trainer |
 | Tensor parallelism | **not implemented** | pipeline parallelism only |
 | SFT | **basic data path only** | JSONL instruction records are formatted into text and trained with next-token loss; no chat template or prompt-token masking |

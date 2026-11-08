@@ -6,7 +6,7 @@
 
 - **Training:** two real modes. DiLoCo workers run local AdamW steps on disjoint shards and the coordinator aggregates pseudo-gradients. Pipeline-parallel workers own contiguous layer ranges, exchange hidden activations through the tunnel, and apply AdamW only to their own parameters; the coordinator assembles the global checkpoint from verified stage uploads.
 - **Inference:** a model is split into contiguous layer stages across workers; hidden activations travel through an outbound WebSocket tunnel; KV caches stay on the stage owner; tokens stream back via SSE. Works for the built-in TinyGPT and for self-contained Llama/Qwen HF safetensors. Distributed output is tested byte-for-byte against monolithic greedy generation.
-- **Heterogeneous:** PyTorch CUDA / ROCm / Intel XPU / Apple MPS / CPU detection with honest fallback and a workload-aware auto policy. Unsupported NPU is reported, not faked.
+- **Heterogeneous:** PyTorch CUDA / ROCm / Intel XPU / Apple MPS / CPU detection with honest fallback and a workload-aware auto policy. A pipeline can put different stages on different backends (verified MPS + CPU). Unsupported NPU is reported, not faked.
 - **Network:** coordinator + worker relay. Workers make outbound connections, so NAT-port-forwarding is not required on worker devices.
 - **Security:** Ed25519 node identity, signed HTTP requests with replay protection, TLS with a generated private CA, join/admin tokens, safetensors-only payloads, update validation, reputation and outlier filtering.
 
@@ -38,6 +38,8 @@
 | LoRA pipeline training and LoRA inference | working; packed 4-bit QLoRA not implemented |
 | Real SmolLM2-135M LoRA pipeline run | working: loss 3.746 → 3.704, 17+13 layers, 2 workers |
 | Real SmolLM2-135M layer-sharded inference | working: 2 stages, text generated on CPU |
+| Hybrid MPS + CPU stages on one host | working: SmolLM2 stage 0 on Metal, stage 1 on CPU |
+| Island labels + contiguous island blocks | working: pinning and `island_hops <= 1` tested |
 | TLS + signed registration/heartbeat/update | working, tested |
 | C++ native aggregation/sampling/data batches | working, optional |
 | Metrics, dashboard, logs, doctor | working; dashboard HTTP smoke-tested |

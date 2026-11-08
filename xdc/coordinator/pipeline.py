@@ -42,7 +42,7 @@ from ..model.registry import (
 from ..model.tokenizer import fixed_token_batches, read_tokens, sample_token_batch
 from ..protocol import PipelineAssignment
 from ..tensorwire import decode_array, encode_array
-from .scheduler import node_score, training_candidates
+from .scheduler import group_by_island, node_score, training_candidates
 from .state import JobRecord, NodeRecord, RoundRecord, StateStore
 from .tunnel import TunnelError, TunnelHub
 
@@ -245,12 +245,12 @@ class PipelineEngine:
         spec = job.spec()
         nodes = [
             n
-            for n in training_candidates(self.store, self.cfg.heartbeat_timeout_s, spec.max_workers)
+            for n in training_candidates(self.store, self.cfg.heartbeat_timeout_s, 1_000_000)
             if self.tunnel.connected(n.node_id)
         ]
         if spec.island:
             nodes = [n for n in nodes if n.labels.get("island", "default") == spec.island]
-        return nodes
+        return group_by_island(nodes)[: spec.max_workers]
 
     def _memory_budget(self, node: NodeRecord) -> int:
         caps = node.caps()
@@ -965,6 +965,12 @@ class PipelineEngine:
             "stage_metrics": result.metrics,
             "stage_parameters": [int(s.parameters) for s in plan],
             "stage_measured_bytes": [int(m.get("param_bytes", 0) + m.get("optimizer_bytes", 0) + m.get("grad_bytes", 0)) for m in result.metrics],
+            "island_hops": sum(
+                1
+                for left, right in zip(plan, plan[1:])
+                if left.node.labels.get("island", "default")
+                != right.node.labels.get("island", "default")
+            ),
             "optimizer_sharded": True,
             "parallelism": "pipeline",
             "timestamp": time.time(),
@@ -1047,6 +1053,7 @@ class PipelineEngine:
                     "estimated_bytes": s.estimated_bytes,
                     "device": s.node.caps().device_name,
                     "backend": s.node.caps().backend,
+                    "island": s.node.labels.get("island", "default"),
                 }
             )
         job.stage_plan = stages

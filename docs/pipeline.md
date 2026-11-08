@@ -134,6 +134,42 @@ Tied models need one exception: the final stage's `lm_head` is regenerated from
 the global embedding because the last training stage's copy is one optimizer step
 behind after commit.
 
+## Islands and hybrid devices
+
+Workers can carry an `island` label in `worker.yaml`:
+
+```yaml
+worker:
+  labels:
+    island: rack-a
+```
+
+Two placement behaviours are implemented:
+
+- **Pinning:** a job with `training.island: rack-a` only uses workers whose
+  `island` label matches, for both training and inference.
+- **Block ordering:** without pinning, candidate nodes are grouped by island and
+  each island receives a contiguous stage block. The number of cross-island
+  hidden-state hops is measured as `island_hops` in every round metric and is at
+  most `number_of_islands - 1`. This avoids interleaving islands by compute score,
+  which would make every stage boundary a WAN hop.
+
+Hybrid device placement is a per-worker setting:
+
+```yaml
+worker:
+  backend: mps     # explicit; auto keeps small tensors on CPU
+```
+
+A two-process job can therefore run stage 0 on Metal and stage 1 on the CPU.
+`stage_metrics[*].device` and inference stage views report the actual device.
+This is cross-process hybrid placement on one node, not two stages sharing one
+process. CUDA/ROCm/XPU follow the same `device_for` path but are unverified on
+this host.
+
+True WAN island routing (per-island replicas, link-quality probes, block-boundary
+compression) is not implemented. `island` only affects placement today.
+
 ## Limits
 
 - No interleaved 1F1B schedule: microbatches are processed sequentially. This
@@ -147,5 +183,8 @@ behind after commit.
 - The planner uses reported available memory and compute scores. Two processes on
   one physical host share real memory, so the sum of their budgets can exceed the
   host; the 75% fraction and reserve are heuristics, not a hard cgroup.
-- Islands (block-boundary traffic reduction across networks) and intra-node
-  CPU/GPU hybrid stage placement are not implemented yet.
+- Island labels reduce stage-boundary crossings but do not change transport:
+  cross-island hops still use the coordinator relay WebSocket.
+- Hybrid placement is across processes; one process cannot host two stages of
+  the same job on different devices.
+- No link-quality/latency-aware island ordering; island order uses compute score.

@@ -19,6 +19,27 @@ def node_score(node: NodeRecord) -> float:
     return max(caps.compute_score, 0.1) * max(node.reputation, 0.05) * (0.5 + 0.5 * memory_factor)
 
 
+def group_by_island(nodes: list[NodeRecord]) -> list[NodeRecord]:
+    """Order nodes so each island occupies one contiguous stage block.
+
+    A pipeline only pays a cross-island hop at the boundary between two island
+    blocks.  Ordering by score alone can interleave islands and multiply WAN
+    traffic.  Islands are ordered by their best node score, nodes within an
+    island by score.
+    """
+    buckets: dict[str, list[NodeRecord]] = {}
+    for node in nodes:
+        buckets.setdefault(node.labels.get("island", "default"), []).append(node)
+    ordered: list[NodeRecord] = []
+    for island in sorted(
+        buckets,
+        key=lambda name: max(node_score(n) for n in buckets[name]),
+        reverse=True,
+    ):
+        ordered.extend(sorted(buckets[island], key=node_score, reverse=True))
+    return ordered
+
+
 def training_candidates(store: StateStore, timeout_s: float, max_n: int) -> list[NodeRecord]:
     nodes = [
         n

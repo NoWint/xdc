@@ -36,13 +36,19 @@ def main() -> int:
     parser.add_argument("--seq-len", type=int, default=128)
     parser.add_argument("--micro-batches", type=int, default=2)
     parser.add_argument("--lora-rank", type=int, default=4)
+    parser.add_argument(
+        "--backends",
+        default="cpu,cpu",
+        help="comma-separated backend for worker-1,worker-2 (cpu,mps,cuda,rocm,xpu)",
+    )
     args = parser.parse_args()
+    backends = dict(zip(("worker-1", "worker-2"), args.backends.split(",")))
 
     source = Path(args.model_dir)
     work = Path(args.workdir)
     if work.exists():
         shutil.rmtree(work)
-    c = Cluster(work, workers=2)
+    c = Cluster(work, workers=2, backends=backends)
     conf = yaml.safe_load(c.coord_config.read_text())
     conf["coordinator"].update({"max_upload_mb": 2048, "pipeline_memory_fraction": 0.75})
     c.coord_config.write_text(yaml.safe_dump(conf, sort_keys=False))

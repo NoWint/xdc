@@ -1,0 +1,163 @@
+{
+  "recorded_at": "2026-11-08T13:44:19+0800",
+  "host": {
+    "chip": "Apple M4",
+    "total_memory_mb": 16384,
+    "workers": 2,
+    "note": "one process on MPS, one on CPU, same physical host"
+  },
+  "model": {
+    "repo": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "parameters": 134515008,
+    "layers": 30,
+    "tied_embeddings": true
+  },
+  "training": {
+    "job_id": "job-4ad8ecb1d39d",
+    "state": "completed",
+    "version": 1,
+    "parallelism": "pipeline",
+    "lora_rank": 4,
+    "lora_alpha": 8.0,
+    "rounds": 1,
+    "batch_size": 1,
+    "seq_len": 128,
+    "micro_batches": 2,
+    "initial_loss": 3.762516736984253,
+    "final_loss": 3.744630813598633,
+    "tokens_trained": 256,
+    "wall_s": 43.5,
+    "stage_plan": [
+      {
+        "stage_index": 0,
+        "node_id": "node-5b9df2e93293711c20323495",
+        "node_name": "worker-1",
+        "layer_start": 0,
+        "layer_end": 18,
+        "parameters": 92765952,
+        "trainable_parameters": 732672,
+        "estimated_bytes": 477768960,
+        "device": "mps",
+        "backend": "mps",
+        "measured_param_bytes": 371063808,
+        "measured_optimizer_bytes": 5862384,
+        "measured_total_bytes": 379856880,
+        "cached": false,
+        "measured_grad_bytes": 2930688,
+        "measured_parameters": 92765952,
+        "grad_norm": 0.3069986618959527
+      },
+      {
+        "stage_index": 1,
+        "node_id": "node-85d0f4bdcaad7e6ef6e2a0ed",
+        "node_name": "worker-2",
+        "layer_start": 18,
+        "layer_end": 30,
+        "parameters": 71281728,
+        "trainable_parameters": 488448,
+        "estimated_bytes": 366684480,
+        "device": "cpu",
+        "backend": "cpu",
+        "measured_param_bytes": 285126912,
+        "measured_optimizer_bytes": 3908256,
+        "measured_total_bytes": 290988960,
+        "cached": false,
+        "measured_grad_bytes": 1953792,
+        "measured_parameters": 71281728,
+        "grad_norm": 0.239715448372805
+      }
+    ],
+    "metrics": [
+      {
+        "round": 0,
+        "version": 1,
+        "workers": [
+          "node-5b9df2e93293711c20323495",
+          "node-85d0f4bdcaad7e6ef6e2a0ed"
+        ],
+        "updates_received": 2,
+        "updates_used": 2,
+        "train_loss": 1.9864631295204163,
+        "val_loss": 3.744630813598633,
+        "tokens": 256,
+        "micro_batches": 2,
+        "stages": 2,
+        "activation_bytes": 589824,
+        "round_wall_s": 37.31677198410034,
+        "stage_metrics": [
+          {
+            "stage_index": 0,
+            "version": 1,
+            "grad_norm": 0.3069986618959527,
+            "loss": 0.0,
+            "tokens": 256,
+            "activation_bytes": 294912,
+            "param_bytes": 371063808,
+            "optimizer_bytes": 5862384,
+            "grad_bytes": 2930688,
+            "trainable_parameters": 732672,
+            "parameters": 92765952,
+            "device": "mps",
+            "param_hash": "bd2e6ce5a0fc729380b038999c23290ee8c009adbfceee43e938c2f7d89b81e2",
+            "elapsed_s": 10.9781653881073
+          },
+          {
+            "stage_index": 1,
+            "version": 1,
+            "grad_norm": 0.239715448372805,
+            "loss": 1.9864631295204163,
+            "tokens": 0,
+            "activation_bytes": 294912,
+            "param_bytes": 285126912,
+            "optimizer_bytes": 3908256,
+            "grad_bytes": 1953792,
+            "trainable_parameters": 488448,
+            "parameters": 71281728,
+            "device": "cpu",
+            "param_hash": "3d3a6731727dcf88cae85c79349663cd11cefd3fe9b04f9f782ca39dd8e07875",
+            "elapsed_s": 9.27646017074585
+          }
+        ],
+        "stage_parameters": [
+          92765952,
+          71281728
+        ],
+        "stage_measured_bytes": [
+          379856880,
+          290988960
+        ],
+        "optimizer_sharded": true,
+        "parallelism": "pipeline",
+        "timestamp": 1794116247.516856
+      }
+    ]
+  },
+  "inference": {
+    "tokens": 8,
+    "first_token_ms": 17953.98,
+    "total_ms": 19324.45,
+    "text": ", I was a young man, a",
+    "stages": [
+      {
+        "node": "worker-1",
+        "backend": "mps",
+        "layers": [
+          0,
+          16
+        ]
+      },
+      {
+        "node": "worker-2",
+        "backend": "cpu",
+        "layers": [
+          16,
+          30
+        ]
+      }
+    ],
+    "note": "cold run: first request generated stage files and warmed MPS"
+  },
+  "reproduction": {
+    "command": "python benchmarks/smollm2_pipeline.py --backends mps,cpu --model-dir /path/to/SmolLM2-135M-Instruct"
+  }
+}

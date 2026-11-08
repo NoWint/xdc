@@ -201,6 +201,19 @@ prompt ──▶ stage0 ──hidden──▶ stage1 ──logits──▶ coord
 
 Tests compare greedy distributed generation byte-for-byte with monolithic `GPT.generate` on the same checkpoint, including KV-cached decode. This catches layer-slice, position, cache and sampling errors.
 
+### 4.6 Islands and hybrid devices
+
+`WorkerConfig.labels["island"]` is carried in registration and persisted on the
+node. `training.island` pins a job to one island. Without pinning,
+`group_by_island` orders candidates so each island gets one contiguous stage
+block, and the round metric records `island_hops` (adjacent stages whose island
+differs). Inference applies the same ordering and pinning.
+
+Each worker chooses a device once from its backend (`cpu`, `mps`, `cuda`, `rocm`,
+`xpu`, `auto`); stage files and KV caches live on that device. A pipeline job can
+therefore mix Metal and CPU stages. The planner does not split a single stage
+across devices.
+
 ## 5. Device selection
 
 `auto`:

@@ -28,7 +28,7 @@ from ..model.registry import model_kind, stage_state_from_global
 from ..model.tokenizer import ByteTokenizer, HFTokenizer, TokenizerInfo, load_tokenizer
 from ..tensorwire import decode_array, encode_array
 from ..protocol import InferenceRequest
-from .scheduler import StagePlan, allocate_stages, inference_candidates
+from .scheduler import StagePlan, allocate_stages, group_by_island, inference_candidates
 from .state import JobRecord, StateStore
 from .tunnel import TunnelError, TunnelHub
 
@@ -173,11 +173,15 @@ class InferenceEngine:
             [(n.node_id, n.reputation, n.banned, n.last_seen) for n in cands],
             self.cfg.heartbeat_timeout_s,
         )
+        island = model.job.spec().island
         nodes = [
             n
             for n in cands
-            if n.node_id not in exclude and self.tunnel.connected(n.node_id)
+            if n.node_id not in exclude
+            and self.tunnel.connected(n.node_id)
+            and (not island or n.labels.get("island", "default") == island)
         ]
+        nodes = group_by_island(nodes)
         if not nodes:
             raise InferenceError(
                 "no inference workers with active tunnels: "
@@ -262,6 +266,7 @@ class InferenceEngine:
                 "layer_start": p.layer_start,
                 "layer_end": p.layer_end,
                 "layers": p.num_layers,
+                "island": p.node.labels.get("island", "default"),
             }
             for p in plans
         ]
