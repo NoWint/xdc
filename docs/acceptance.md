@@ -163,7 +163,7 @@ worker loaded only its 338 MB / 284 MB stage slice.
 | Pipeline-parallel full fine-tune | **verified across processes** | exact monolithic AdamW parity, 2 stages, stage-only memory |
 | HF `safetensors` loader / tokenizer.json | **verified** | SmolLM2-135M and Tiny Llama fixtures; no remote code |
 | HF layer-sharded inference | **verified** | SmolLM2 text generated through 2 stages; tiny model exact parity test |
-| Islands / hybrid CPU-GPU stage placement | **not implemented** | future P2 |
+| Islands / hybrid CPU-GPU stage placement | **not implemented** | `island` only filters nodes by label today; no block-boundary routing or intra-node CPU/GPU split |
 | RL / preference optimization | **not implemented** | no reward model, rollouts or policy-gradient trainer |
 | Tensor parallelism | **not implemented** | pipeline parallelism only |
 | SFT | **basic data path only** | JSONL instruction records are formatted into text and trained with next-token loss; no chat template or prompt-token masking |

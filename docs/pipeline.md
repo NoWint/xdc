@@ -138,6 +138,9 @@ behind after commit.
 
 - No interleaved 1F1B schedule: microbatches are processed sequentially. This
   keeps the protocol simple and memory bounded, at the cost of pipeline bubbles.
+- Gradient clipping is **per stage**, not global. With `grad_clip > 0` a pipeline
+  step is not bitwise identical to monolithic AdamW; set `grad_clip=0` for the
+  exact-parity test path.
 - No tensor parallelism, sequence parallelism or activation recomputation.
 - Stage placement is one stage per worker per job, so a worker cannot host two
   stages of the same job.
