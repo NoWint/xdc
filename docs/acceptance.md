@@ -26,7 +26,7 @@ intra-node CPU/GPU hybrid stages are **not verified**. See §5.
 
 ```text
 $ pytest -q
-30 passed, 15 warnings
+30 passed, 19 warnings
 ```
 
 The P1 pipeline module adds six real-process/unit tests and one inference parity
