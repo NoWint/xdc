@@ -28,6 +28,16 @@ from ..model.checkpoint import (
 )
 from ..model.data import shard_bounds, split_train_val
 from ..model.gpt import GPT, ModelConfig
+from ..model.hf import SafetensorStore, full_state, validate_model_dir
+from ..model.llama import LlamaConfig
+from ..model.registry import model_kind, resolve_model_dir
+from ..model.tokenizer import (
+    TokenizerInfo,
+    load_tokenizer,
+    tokenize_bytes,
+    tokenizer_info_from_dir,
+    write_tokens,
+)
 from ..model.train import aggregate_deltas, evaluate_loss
 from ..protocol import (
     Assignment,
@@ -38,6 +48,7 @@ from ..protocol import (
     UpdateAccepted,
     UpdateMeta,
 )
+from .pipeline import PipelineEngine
 from .scheduler import training_candidates
 from .state import JobRecord, NodeRecord, RoundRecord, StateStore
 from .tunnel import TunnelHub
@@ -54,6 +65,7 @@ class TrainingEngine:
         self.stopping = False
         self._last_wait_note: dict[str, float] = {}
         self._job_locks: dict[str, asyncio.Lock] = {}
+        self.pipeline = PipelineEngine(store, tunnel, cfg, self)
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -91,13 +103,32 @@ class TrainingEngine:
         with self.store.lock:
             ds = self.store.datasets.get(req.dataset_id)
             if not ds or not Path(ds.path).exists():
-                raise ValueError(f"dataset {req.dataset_id} not found")
-            mcfg = ModelConfig.from_dict(req.model)
+                raise ValueError(f"dataset {ds.dataset_id if ds else req.dataset_id} not found")
             spec = req.training
-            if spec.seq_len > mcfg.block_size:
-                raise ValueError("training.seq_len exceeds model.block_size")
+            kind = model_kind(req.model)
+            tokenizer_info = TokenizerInfo(kind="bytes")
+            model_dir: Path | None = None
+            if kind == "hf":
+                model_dir, mcfg = self._load_hf_spec(req.model)
+                if spec.parallelism != "pipeline":
+                    spec = spec.model_copy(
+                        update={"parallelism": "pipeline", "algorithm": "pipeline"}
+                    )
+                tokenizer_info = tokenizer_info_from_dir(model_dir)
+                tokenizer_info.kind = tokenizer_info.kind or "hf"
+            else:
+                mcfg = ModelConfig.from_dict(req.model)  # type: ignore[assignment]
+                if spec.parallelism == "pipeline" and spec.seq_len > mcfg.block_size:
+                    raise ValueError("training.seq_len exceeds model.block_size")
+            if spec.seq_len > (
+                mcfg.block_size if isinstance(mcfg, ModelConfig) else mcfg.max_position_embeddings
+            ):
+                raise ValueError("training.seq_len exceeds the model context window")
+
             raw = Path(ds.path).read_bytes()
-            train_data, val_data = split_train_val(raw, spec.val_fraction, min_val_bytes=max(spec.seq_len * 8, 512))
+            train_data, val_data = split_train_val(
+                raw, spec.val_fraction, min_val_bytes=max(spec.seq_len * 8, 512)
+            )
             if len(train_data) < spec.seq_len + 2:
                 raise ValueError("dataset too small after train/validation split")
             job_id = self.store.new_job_id()
@@ -109,28 +140,103 @@ class TrainingEngine:
             model_path = jdir / "global.safetensors"
             optimizer_path = jdir / "outer_optimizer.safetensors"
 
-            if req.init_checkpoint_job:
+            model_spec = dict(req.model)
+            train_tokens_path = None
+            val_tokens_path = None
+            if spec.parallelism == "pipeline" or kind == "hf":
+                tokenizer = load_tokenizer(model_dir, tokenizer_info) if model_dir else load_tokenizer(
+                    jdir, tokenizer_info
+                )
+                train_ids = tokenize_bytes(train_data, tokenizer)
+                val_ids = tokenize_bytes(val_data, tokenizer)
+                if len(train_ids) < spec.seq_len + 2:
+                    raise ValueError(
+                        f"tokenized training split too small ({len(train_ids)} tokens) for seq_len={spec.seq_len}"
+                    )
+                if len(val_ids) < spec.seq_len + 2:
+                    raise ValueError("tokenized validation split too small for seq_len")
+                train_tokens_path = jdir / "train.tokens"
+                val_tokens_path = jdir / "val.tokens"
+                n_train, sha_train = write_tokens(train_tokens_path, train_ids)
+                n_val, sha_val = write_tokens(val_tokens_path, val_ids)
+                tokenizer_info.vocab_size = int(getattr(tokenizer, "vocab_size", tokenizer_info.vocab_size))
+                job_tokenizer = tokenizer_info.to_dict()
+                job_tokenizer.update(
+                    {
+                        "train_tokens": n_train,
+                        "val_tokens": n_val,
+                        "train_tokens_sha256": sha_train,
+                        "val_tokens_sha256": sha_val,
+                    }
+                )
+            else:
+                job_tokenizer = tokenizer_info.to_dict()
+
+            if kind == "hf":
+                assert model_dir is not None
+                with SafetensorStore(model_dir) as store:
+                    state = full_state(store, mcfg)  # type: ignore[arg-type]
+                model_spec = {
+                    **mcfg.to_dict(),  # type: ignore[union-attr]
+                    "kind": "hf",
+                    "model_name": model_dir.name,
+                    "model_dir": model_dir.name,
+                    "lora_rank": spec.lora_rank,
+                    "lora_alpha": spec.lora_alpha,
+                }
+                params = int(mcfg.num_parameters())  # type: ignore[union-attr]
+            else:
+                if req.init_checkpoint_job:
+                    src = self.store.jobs.get(req.init_checkpoint_job)
+                    if not src or not src.latest_checkpoint:
+                        raise ValueError("init_checkpoint_job has no checkpoint")
+                    src_path = self.store.data_dir / src.latest_checkpoint
+                    state = load_state(src_path)
+                    gpt = GPT(mcfg)  # type: ignore[arg-type]
+                    gpt.load_state_dict(state, strict=True)
+                else:
+                    torch.manual_seed(spec.seed)
+                    gpt = GPT(mcfg)  # type: ignore[arg-type]
+                state = gpt.state_dict()
+                model_spec = {
+                    **mcfg.to_dict(),  # type: ignore[union-attr]
+                    "kind": "tinygpt",
+                    "lora_rank": spec.lora_rank,
+                    "lora_alpha": spec.lora_alpha,
+                }
+                params = gpt.num_parameters()
+
+            if req.init_checkpoint_job and kind == "hf":
                 src = self.store.jobs.get(req.init_checkpoint_job)
                 if not src or not src.latest_checkpoint:
                     raise ValueError("init_checkpoint_job has no checkpoint")
-                src_path = self.store.data_dir / src.latest_checkpoint
-                state = load_state(src_path)
-                gpt = GPT(mcfg)
-                gpt.load_state_dict(state, strict=True)
-            else:
-                torch.manual_seed(spec.seed)
-                gpt = GPT(mcfg)
-            params = gpt.num_parameters()
+                if src.model_kind != "hf":
+                    raise ValueError("cannot resume an HF model from a TinyGPT checkpoint")
+                state = load_state(self.store.data_dir / src.latest_checkpoint)
+
             init_path = jdir / "init.safetensors"
-            save_state(init_path, gpt.state_dict(), {"kind": "xdc-init", "version": "0"})
-            model_sha = save_state(model_path, gpt.state_dict(), {"kind": "xdc-global", "version": "0"})
+            model_sha = save_state(
+                model_path, state, {"kind": "xdc-global", "version": "0"}
+            )
+            if init_path.exists():
+                init_path.unlink()
+            try:
+                # The initial state and the first global checkpoint are the same
+                # bytes.  A hard link keeps both names without doubling the disk
+                # footprint; the next save_state atomically replaces global.safetensors
+                # and leaves init.safetensors on the old inode.
+                import os
+
+                os.link(model_path, init_path)
+            except OSError:
+                save_state(init_path, state, {"kind": "xdc-init", "version": "0"})
             job = JobRecord(
                 job_id=job_id,
                 name=req.name,
                 state="queued",
                 created_at=time.time(),
                 updated_at=time.time(),
-                model=mcfg.to_dict(),
+                model=model_spec,
                 training=spec.model_dump(mode="json"),
                 dataset_id=ds.dataset_id,
                 dataset_name=ds.name,
@@ -143,9 +249,24 @@ class TrainingEngine:
                 model_sha256=model_sha,
                 parameters=params,
                 init_checkpoint_job=req.init_checkpoint_job,
+                model_kind=kind,
+                model_dir=str(model_dir) if model_dir else None,
+                tokenizer=job_tokenizer,
+                data_train_tokens_path=str(train_tokens_path) if train_tokens_path else None,
+                data_val_tokens_path=str(val_tokens_path) if val_tokens_path else None,
             )
-            job.add_event("info", "job created", parameters=params, dataset=ds.name)
-            initial_loss = self._evaluate(job, train=False)
+            job.add_event(
+                "info",
+                "job created",
+                parameters=params,
+                dataset=ds.name,
+                model_kind=kind,
+                parallelism=spec.parallelism,
+            )
+            if spec.parallelism == "pipeline":
+                initial_loss = self.pipeline._evaluate(job, dict(state))
+            else:
+                initial_loss = self._evaluate(job, train=False)
             job.initial_loss = initial_loss
             job.best_loss = initial_loss
             self.store.create_job(job)
@@ -155,6 +276,16 @@ class TrainingEngine:
                 job.add_event("info", "training started")
             self.store.save()
             return job
+
+    def _load_hf_spec(self, spec: dict):
+        model_dir = resolve_model_dir(spec, self.store.data_dir)
+        if not (model_dir / "tokenizer.json").exists():
+            raise ValueError(
+                "Hugging Face models require tokenizer.json; XDC never imports remote tokenizer code"
+            )
+        summary = validate_model_dir(model_dir)
+        cfg = LlamaConfig.from_dict(summary["config"])
+        return model_dir, cfg
 
     def start_job(self, job_id: str) -> JobRecord:
         job = self._job(job_id)
@@ -227,11 +358,19 @@ class TrainingEngine:
             tokens_trained=job.tokens_trained,
             parameters=job.parameters,
             traceback=job.traceback,
+            model_kind=job.model_kind,
+            model_dir=job.model_dir,
+            tokenizer=job.tokenizer,
+            stage_plan=job.stage_plan,
+            stage_checkpoints=job.stage_checkpoints,
         )
 
     # ------------------------------------------------------------------ round flow
     async def _advance(self, job: JobRecord) -> None:
         spec = job.spec()
+        if spec.parallelism == "pipeline" or job.model_kind == "hf":
+            await self.pipeline.advance(job)
+            return
         if job.next_round >= spec.rounds:
             self._complete(job)
             return
@@ -601,6 +740,11 @@ class TrainingEngine:
                 "tokens_trained": job.tokens_trained,
                 "latest_checkpoint": job.latest_checkpoint,
                 "checkpoint_sha256": job.model_sha256,
+                "model_kind": job.model_kind,
+                "model_dir": job.model_dir,
+                "tokenizer": job.tokenizer,
+                "stage_plan": job.stage_plan,
+                "stage_checkpoints": job.stage_checkpoints,
             },
         )
 
@@ -652,6 +796,8 @@ class TrainingEngine:
         job = self.store.get_job(meta.job_id)
         if job is None:
             raise KeyError("job not found")
+        if job.spec().parallelism == "pipeline":
+            raise ValueError("pipeline jobs exchange stage RPC, not HTTP pseudo-gradient updates")
         rnd = job.current_round
         if job.state != "running" or rnd is None or rnd.round_id != meta.round_id:
             raise ValueError("round is not active")

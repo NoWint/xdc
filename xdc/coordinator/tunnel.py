@@ -43,6 +43,15 @@ class TunnelHub:
         self.pending: dict[str, tuple[str, asyncio.Future]] = {}
         self._lock = asyncio.Lock()
 
+    def states(self) -> dict[str, str]:
+        out = {}
+        for node_id, conn in self.connections.items():
+            try:
+                out[node_id] = conn.websocket.client_state.name
+            except Exception as exc:
+                out[node_id] = f"error:{exc}"
+        return out
+
     def connected(self, node_id: str) -> bool:
         conn = self.connections.get(node_id)
         if not conn:

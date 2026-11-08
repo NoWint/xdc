@@ -92,6 +92,7 @@ class RoundRecord:
     quorum_reached_at: float | None = None
     aggregated: bool = False
     attempt: int = 1
+    pipeline: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict) -> "RoundRecord":
@@ -150,6 +151,13 @@ class JobRecord:
     completed_at: float | None = None
     round_attempts: int = 0
     restart_count: int = 0
+    model_kind: str = "tinygpt"
+    model_dir: str | None = None
+    tokenizer: dict[str, Any] = field(default_factory=dict)
+    data_train_tokens_path: str | None = None
+    data_val_tokens_path: str | None = None
+    stage_plan: list[dict[str, Any]] = field(default_factory=list)
+    stage_checkpoints: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict) -> "JobRecord":
@@ -201,6 +209,31 @@ class StateStore:
                         job.add_event("warning", "coordinator restarted; uncommitted round discarded")
                     job.state = "running"
                     job.restart_count += 1
+                # A pipeline commit writes the model/checkpoint before the state
+                # document.  If the process died between those writes, recover the
+                # newest committed checkpoint instead of reusing an older version.
+                try:
+                    if job.spec().parallelism == "pipeline":
+                        ckpt_dir = Path(job.model_path).parent / "checkpoints"
+                        versions = []
+                        for path in ckpt_dir.glob("v*.safetensors"):
+                            try:
+                                versions.append(int(path.stem[1:]))
+                            except ValueError:
+                                continue
+                        if versions and max(versions) > job.version:
+                            job.version = max(versions)
+                            job.next_round = job.version
+                            job.latest_checkpoint = str(
+                                (ckpt_dir / f"v{job.version:05d}.safetensors").relative_to(self.data_dir)
+                            )
+                            job.add_event(
+                                "warning",
+                                "recovered committed pipeline checkpoint after restart",
+                                version=job.version,
+                            )
+                except Exception:
+                    pass
 
     def save(self, min_interval: float = 0.0) -> None:
         """Persist state atomically.

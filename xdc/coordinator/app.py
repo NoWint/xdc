@@ -24,6 +24,7 @@ from ..crypto import (
     verify_signed_request,
 )
 from ..model.checkpoint import sha256_file
+from ..model.hf import HFModelError, validate_model_dir
 from ..protocol import (
     AdminStats,
     CheckpointView,
@@ -390,6 +391,161 @@ def create_app(cfg: CoordinatorConfig) -> FastAPI:
             raise HTTPException(403, str(exc)) from exc
         return FileResponse(path, media_type="application/octet-stream", filename="stage.safetensors")
 
+    @app.get("/v1/pipeline/stage/{token}")
+    async def pipeline_stage_file(token: str, request: Request):
+        s = svc(request)
+        body = await request.body()
+        node = await s.verify_worker(request, body)
+        try:
+            path = s.training.pipeline.stage_token(token, node.node_id, "params")
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        return FileResponse(path, media_type="application/octet-stream", filename="stage.safetensors")
+
+    @app.get("/v1/pipeline/optimizer/{token}")
+    async def pipeline_optimizer_file(token: str, request: Request):
+        s = svc(request)
+        body = await request.body()
+        node = await s.verify_worker(request, body)
+        try:
+            path = s.training.pipeline.stage_token(token, node.node_id, "optimizer")
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        return FileResponse(path, media_type="application/octet-stream", filename="optimizer.safetensors")
+
+    @app.post("/v1/pipeline/upload")
+    async def pipeline_upload(request: Request, x_xdc_pipeline_meta: str | None = Header(default=None)):
+        s = svc(request)
+        length = int(request.headers.get("content-length", "0") or 0)
+        if length > s.cfg.max_upload_mb * 1024 * 1024:
+            raise HTTPException(413, "pipeline shard too large")
+        body = await request.body()
+        node = await s.verify_worker(request, body)
+        if not x_xdc_pipeline_meta:
+            raise HTTPException(400, "missing X-XDC-Pipeline-Meta")
+        try:
+            meta = json.loads(base64.b64decode(x_xdc_pipeline_meta))
+        except Exception as exc:
+            raise HTTPException(400, f"invalid pipeline metadata: {exc}") from exc
+        if str(meta.get("node_id")) != node.node_id:
+            raise HTTPException(403, "metadata node mismatch")
+        try:
+            # Do not take the job round lock here: the training coroutine holds
+            # it while awaiting this upload, so acquiring it would deadlock.
+            return await asyncio.to_thread(s.training.pipeline.record_upload, meta, body)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    # ------------------------------------------------------------------ models
+    @app.get("/v1/admin/models")
+    async def list_models(request: Request, authorization: str | None = Header(default=None)):
+        s = svc(request)
+        s.require_admin(authorization)
+        root = s.store.data_dir / "models"
+        out = []
+        if root.exists():
+            for path in sorted(root.iterdir()):
+                if not path.is_dir():
+                    continue
+                try:
+                    summary = validate_model_dir(path)
+                    out.append({"name": path.name, **summary})
+                except Exception as exc:
+                    out.append({"name": path.name, "error": str(exc)})
+        return out
+
+    @app.put("/v1/admin/models/{name}/files/{filename}")
+    async def upload_model_file(
+        name: str,
+        filename: str,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ):
+        s = svc(request)
+        s.require_admin(authorization)
+        if not name.replace("-", "").replace("_", "").replace(".", "").isalnum():
+            raise HTTPException(400, "invalid model name")
+        if Path(filename).name != filename or not (
+            filename in {
+                "config.json",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "special_tokens_map.json",
+                "generation_config.json",
+                "model.safetensors",
+                "model.safetensors.index.json",
+            }
+            or (filename.endswith(".safetensors") and filename != "model.safetensors.index.json")
+        ):
+            raise HTTPException(400, "file is not on the model allow-list")
+        length = int(request.headers.get("content-length", "0") or 0)
+        if length <= 0 or length > s.cfg.max_model_upload_mb * 1024 * 1024:
+            raise HTTPException(413, "model file is empty or too large")
+        root = (s.store.data_dir / "models" / name).resolve()
+        if (s.store.data_dir / "models").resolve() not in root.parents:
+            raise HTTPException(400, "invalid model path")
+        root.mkdir(parents=True, exist_ok=True)
+        from ..model.checkpoint import save_json  # noqa: F401
+
+        data = await request.body()
+        tmp = root / (filename + ".tmp")
+        tmp.write_bytes(data)
+        import os
+
+        os.replace(tmp, root / filename)
+        return {"ok": True, "name": name, "filename": filename, "bytes": len(data)}
+
+    @app.post("/v1/admin/models/{name}/finalize")
+    async def finalize_model(name: str, request: Request, authorization: str | None = Header(default=None)):
+        s = svc(request)
+        s.require_admin(authorization)
+        root = (s.store.data_dir / "models" / name).resolve()
+        if (s.store.data_dir / "models").resolve() not in root.parents or not root.is_dir():
+            raise HTTPException(404, "model directory not found")
+        try:
+            return {"name": name, **await asyncio.to_thread(validate_model_dir, root)}
+        except HFModelError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/v1/admin/models/{name}/files")
+    async def model_files(name: str, request: Request, authorization: str | None = Header(default=None)):
+        s = svc(request)
+        s.require_admin(authorization)
+        root = (s.store.data_dir / "models" / name).resolve()
+        if (s.store.data_dir / "models").resolve() not in root.parents or not root.is_dir():
+            raise HTTPException(404, "model directory not found")
+        return [
+            {"filename": p.name, "bytes": p.stat().st_size}
+            for p in sorted(root.iterdir())
+            if p.is_file() and not p.name.endswith(".tmp")
+        ]
+
+    @app.get("/v1/jobs/{job_id}/stage/{stage_index}")
+    async def job_stage_file(
+        job_id: str,
+        stage_index: int,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ):
+        s = svc(request)
+        s.require_admin(authorization)
+        job = s.store.get_job(job_id)
+        if not job or job.model_kind != "hf":
+            raise HTTPException(404, "HF job not found")
+        plan = {int(p["stage_index"]): p for p in job.stage_plan}
+        item = plan.get(stage_index)
+        if not item:
+            raise HTTPException(404, "stage not found")
+        path = Path(job.model_path).parent / "pipeline" / f"v{job.version:05d}"
+        candidates = sorted(path.glob(f"stage_{stage_index}_*.safetensors"))
+        if not candidates:
+            raise HTTPException(404, "stage shard not materialized")
+        return FileResponse(candidates[0], media_type="application/octet-stream", filename=candidates[0].name)
+
     # ------------------------------------------------------------------ admin datasets/jobs
     @app.post("/v1/admin/datasets", response_model=DatasetInfo)
     async def upload_dataset(request: Request, name: str = "dataset", authorization: str | None = Header(default=None)):
@@ -511,8 +667,8 @@ def create_app(cfg: CoordinatorConfig) -> FastAPI:
             raise HTTPException(503, str(exc)) from exc
         return {
             "text": result.text,
-            "tokens": len(result.tokens),
-            "bytes_b64": base64.b64encode(bytes(result.tokens)).decode(),
+            "tokens": result.token_count,
+            "bytes_b64": base64.b64encode(result.raw).decode(),
             "first_token_ms": result.first_token_ms,
             "total_ms": result.total_ms,
             "distributed": result.distributed,
@@ -521,6 +677,12 @@ def create_app(cfg: CoordinatorConfig) -> FastAPI:
         }
 
     # ------------------------------------------------------------------ nodes/stats
+    @app.get("/v1/admin/tunnels")
+    async def tunnels(request: Request, authorization: str | None = Header(default=None)):
+        s = svc(request)
+        s.require_admin(authorization)
+        return s.tunnel.states()
+
     @app.get("/v1/nodes", response_model=list[NodeView])
     async def nodes(request: Request, authorization: str | None = Header(default=None)):
         s = svc(request)

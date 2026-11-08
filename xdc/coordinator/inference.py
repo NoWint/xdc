@@ -23,6 +23,9 @@ from .. import native
 from ..config import CoordinatorConfig
 from ..model.checkpoint import load_state, save_state, sha256_file
 from ..model.gpt import ModelConfig, PipelineStage
+from ..model.llama import LlamaConfig, LlamaModel, apply_lora
+from ..model.registry import model_kind, stage_state_from_global
+from ..model.tokenizer import ByteTokenizer, HFTokenizer, TokenizerInfo, load_tokenizer
 from ..tensorwire import decode_array, encode_array
 from ..protocol import InferenceRequest
 from .scheduler import StagePlan, allocate_stages, inference_candidates
@@ -45,10 +48,15 @@ class StageFailure(InferenceError):
 @dataclass
 class ResolvedModel:
     job: JobRecord
-    cfg: ModelConfig
+    cfg: ModelConfig | LlamaConfig
     path: Path
     state: dict[str, torch.Tensor]
     sha256: str
+    kind: str = "tinygpt"
+    tokenizer: ByteTokenizer | HFTokenizer | None = None
+    lora_rank: int = 0
+    lora_alpha: float = 0.0
+    context_limit: int = 0
 
 
 @dataclass
@@ -62,6 +70,8 @@ class StageToken:
 class GenerateResult:
     tokens: list[int] = field(default_factory=list)
     text: str = ""
+    raw: bytes = b""
+    token_count: int = 0
     plan: list[dict] = field(default_factory=list)
     first_token_ms: float | None = None
     total_ms: float = 0.0
@@ -75,6 +85,8 @@ class InferenceEngine:
         self.tunnel = tunnel
         self.cfg = cfg
         self.stage_tokens: dict[str, StageToken] = {}
+        self._resolved: ResolvedModel | None = None
+        self._resolved_key: str = ""
 
     # ------------------------------------------------------------------ model
     def resolve(self, req: InferenceRequest) -> ResolvedModel:
@@ -83,7 +95,11 @@ class InferenceEngine:
         job = self.store.get_job(req.job_id)
         if not job:
             raise KeyError(f"job {req.job_id} not found")
-        cfg = ModelConfig.from_dict(job.model)
+        kind = job.model_kind or model_kind(job.model)
+        if kind == "hf":
+            cfg = LlamaConfig.from_dict(job.model)
+        else:
+            cfg = ModelConfig.from_dict(job.model)
         if req.checkpoint:
             p = Path(req.checkpoint)
             if not p.is_absolute():
@@ -98,33 +114,121 @@ class InferenceEngine:
             raise PermissionError("checkpoint path escapes coordinator data directory")
         if not p.exists():
             raise FileNotFoundError(f"checkpoint {p} not found")
+        stat = p.stat()
+        cache_key = f"{job.job_id}:{p}:{stat.st_size}:{stat.st_mtime_ns}"
+        if self._resolved is not None and self._resolved_key == cache_key:
+            return self._resolved
         state = load_state(p)
-        # Validate early: corrupt checkpoints should fail before workers are called.
-        probe = PipelineStage(cfg, 0, cfg.n_layer)
-        probe.load_global_state(state)
-        return ResolvedModel(job=job, cfg=cfg, path=p, state=state, sha256=sha256_file(p))
+        rank = int(job.model.get("lora_rank", 0))
+        alpha = float(job.model.get("lora_alpha", 0.0))
+        tokenizer = None
+        if kind == "hf":
+            model_dir = self._model_dir(job)
+            tokenizer = load_tokenizer(model_dir, TokenizerInfo.from_dict(job.tokenizer))
+            probe = LlamaModel(cfg)  # type: ignore[arg-type]
+            if rank:
+                apply_lora(probe.model, r=rank, alpha=alpha)
+            probe.load_hf_state(state)
+            context_limit = int(cfg.max_position_embeddings)  # type: ignore[union-attr]
+        else:
+            # Validate early: corrupt checkpoints should fail before workers are called.
+            probe = PipelineStage(cfg, 0, cfg.n_layer)  # type: ignore[arg-type]
+            probe.load_global_state(state)
+            tokenizer = ByteTokenizer()
+            context_limit = int(cfg.block_size)  # type: ignore[union-attr]
+        resolved = ResolvedModel(
+            job=job,
+            cfg=cfg,
+            path=p,
+            state=state,
+            sha256=sha256_file(p),
+            kind=kind,
+            tokenizer=tokenizer,
+            lora_rank=rank,
+            lora_alpha=alpha,
+            context_limit=context_limit,
+        )
+        # Keep one checkpoint resident.  Validation and tokenizer construction
+        # are seconds of work on a 135M-parameter model and must not be repeated
+        # for every generation request.
+        self._resolved = resolved
+        self._resolved_key = cache_key
+        return resolved
+
+    def _model_dir(self, job: JobRecord) -> Path:
+        if job.model_dir and Path(job.model_dir).is_dir():
+            return Path(job.model_dir)
+        name = str(job.model.get("model_dir") or job.model.get("model_name") or "")
+        if not name:
+            raise InferenceError("HF job has no model directory")
+        return self.store.data_dir / "models" / name
 
     async def prepare_plan(
         self, model: ResolvedModel, max_stages: int, exclude: set[str] | None = None
     ) -> tuple[list[StagePlan], dict[str, str]]:
         exclude = exclude or set()
+        cands = inference_candidates(self.store, self.cfg.heartbeat_timeout_s)
+        log.info(
+            "inference candidates=%s cutoff=%.1f",
+            [(n.node_id, n.reputation, n.banned, n.last_seen) for n in cands],
+            self.cfg.heartbeat_timeout_s,
+        )
         nodes = [
             n
-            for n in inference_candidates(self.store, self.cfg.heartbeat_timeout_s)
+            for n in cands
             if n.node_id not in exclude and self.tunnel.connected(n.node_id)
         ]
         if not nodes:
-            raise InferenceError("no inference workers with active tunnels")
-        plans = allocate_stages(nodes, model.cfg.n_layer, max_stages=max_stages)
+            raise InferenceError(
+                "no inference workers with active tunnels: "
+                f"candidates={[(n.node_id, self.tunnel.connected(n.node_id), n.node_id in exclude) for n in self.store.list_nodes()]} "
+                f"hub={self.tunnel.states()}"
+            )
+        layers = (
+            model.cfg.num_hidden_layers if model.kind == "hf" else model.cfg.n_layer  # type: ignore[union-attr]
+        )
+        plans = allocate_stages(nodes, layers, max_stages=max_stages)
         tokens: dict[str, str] = {}
+        latest = Path(model.job.model_path).resolve() if model.job.model_path else None
+        records = (
+            (model.job.stage_checkpoints or {}).get(str(model.job.version), {})
+            if latest is not None and model.path.resolve() == latest
+            else {}
+        )
+        by_range = {
+            (int(r["layer_start"]), int(r["layer_end"])): r
+            for r in records.values()
+            if r.get("params_path")
+        }
+        tied = bool(
+            model.kind == "hf"
+            and isinstance(model.cfg, LlamaConfig)
+            and model.cfg.tie_word_embeddings
+        )
         for plan in plans:
-            stage = PipelineStage(model.cfg, plan.layer_start, plan.layer_end)
-            local_state = stage.layer_keys(model.state)
-            out_dir = self.store.data_dir / "inference" / model.sha256[:24]
-            out_dir.mkdir(parents=True, exist_ok=True)
-            path = out_dir / f"stage_{plan.layer_start}_{plan.layer_end}.safetensors"
-            if not path.exists():
-                save_state(path, local_state, {"kind": "xdc-pipeline-stage"})
+            # Training already wrote a stage-local checkpoint at the exact same
+            # layer range.  Serving it avoids rebuilding a 100 MB+ file on every
+            # inference session.  The final tied stage is the exception: its
+            # duplicated head is resynchronised from the global embedding.
+            record = by_range.get((plan.layer_start, plan.layer_end))
+            reuse = bool(
+                record
+                and Path(self.store.data_dir / record["params_path"]).exists()
+                and not (tied and plan.layer_end == layers)
+            )
+            if reuse:
+                path = self.store.data_dir / record["params_path"]
+            else:
+                local_state = stage_state_from_global(
+                    model.kind, model.cfg, model.state, plan.layer_start, plan.layer_end
+                )
+                out_dir = self.store.data_dir / "inference" / model.sha256[:24]
+                out_dir.mkdir(parents=True, exist_ok=True)
+                path = out_dir / (
+                    f"stage_{plan.layer_start}_{plan.layer_end}_{model.sha256[:12]}.safetensors"
+                )
+                if not path.exists():
+                    save_state(path, local_state, {"kind": "xdc-pipeline-stage"})
             token = secrets.token_urlsafe(24)
             self.stage_tokens[token] = StageToken(
                 node_id=plan.node.node_id, path=path, expires_at=time.time() + 120
@@ -184,9 +288,13 @@ class InferenceEngine:
                     "stage_index": plan.stage_index,
                     "layer_start": plan.layer_start,
                     "layer_end": plan.layer_end,
-                    "model_spec": model.cfg.to_dict(),
+                    "model_spec": model.job.model,
+                    "model_kind": model.kind,
                     "stage_url": stage_urls[plan.node.node_id],
                     "stage_sha256": sha256_file(self.stage_tokens[token].path),
+                    "lora_rank": model.lora_rank,
+                    "lora_alpha": model.lora_alpha,
+                    "tokenizer": model.job.tokenizer,
                 }
                 try:
                     load_result = await self.tunnel.call(
@@ -205,18 +313,25 @@ class InferenceEngine:
                     "distributed": len(plans) > 1,
                     "model_sha256": model.sha256,
                     "attempt": attempt,
-                    "context_limit": model.cfg.block_size,
+                    "context_limit": model.context_limit,
                 },
             }
 
-            prompt = req.prompt.encode("utf-8") or b"\n"
-            max_new = min(req.max_new_tokens, model.cfg.block_size - 1)
-            if len(prompt) > model.cfg.block_size - max_new:
-                prompt = prompt[-(model.cfg.block_size - max_new) :]
+            assert model.tokenizer is not None
+            prompt_ids = model.tokenizer.encode(req.prompt)
+            if not prompt_ids:
+                bos = model.job.tokenizer.get("bos_token_id")
+                prompt_ids = [int(bos)] if bos is not None else [1]
+            max_new = min(req.max_new_tokens, model.context_limit - 1)
+            if len(prompt_ids) > model.context_limit - max_new:
+                prompt_ids = prompt_ids[-(model.context_limit - max_new) :]
             if max_new < 1:
                 raise ValueError("prompt uses the entire context window")
-            tokens = list(prompt)
+            tokens = list(prompt_ids)
             prompt_len = len(tokens)
+            generated_ids: list[int] = []
+            emitted_text = ""
+            emitted_raw = 0
             hidden = None
             logits = None
             for idx, plan in enumerate(plans):
@@ -241,10 +356,18 @@ class InferenceEngine:
 
             sampled = self._sample(logits, req, seed=req.seed + 0)
             tokens.append(sampled)
+            generated_ids.append(sampled)
             produced += 1
             first_token_at = time.perf_counter()
-            yield {"event": "token", "data": {"bytes_b64": base64.b64encode(bytes([sampled])).decode()}}
-            emitted += 1
+            delta = self._token_text(model, generated_ids, emitted_text, emitted_raw)
+            emitted_text = delta["full"]
+            emitted_raw += len(delta["bytes"])
+            if delta["bytes"]:
+                yield {
+                    "event": "token",
+                    "data": {"bytes_b64": base64.b64encode(delta["bytes"]).decode()},
+                }
+                emitted += len(delta["bytes"])
 
             for step in range(1, max_new):
                 feed_token = sampled
@@ -274,14 +397,23 @@ class InferenceEngine:
                     raise InferenceError("final stage returned no logits")
                 sampled = self._sample(logits, req, seed=req.seed + step)
                 tokens.append(sampled)
+                generated_ids.append(sampled)
                 produced += 1
-                yield {
-                    "event": "token",
-                    "data": {"bytes_b64": base64.b64encode(bytes([sampled])).decode()},
-                }
-                emitted += 1
+                delta = self._token_text(model, generated_ids, emitted_text, emitted_raw)
+                emitted_text = delta["full"]
+                emitted_raw += len(delta["bytes"])
+                if delta["bytes"]:
+                    yield {
+                        "event": "token",
+                        "data": {"bytes_b64": base64.b64encode(delta["bytes"]).decode()},
+                    }
+                    emitted += len(delta["bytes"])
 
-            generated_bytes = bytes(tokens[prompt_len:])
+            generated_bytes = (
+                emitted_text.encode("utf-8")
+                if model.kind == "hf"
+                else bytes(int(i) & 0xFF for i in generated_ids)
+            )
             total_s = time.perf_counter() - started
             yield {
                 "event": "done",
@@ -319,8 +451,10 @@ class InferenceEngine:
                         tokens.extend(base64.b64decode(ev["data"]["bytes_b64"]))
                     elif ev["event"] == "done":
                         return GenerateResult(
-                            tokens=list(tokens),
+                            tokens=[],
                             text=tokens.decode("utf-8", errors="replace"),
+                            raw=bytes(tokens),
+                            token_count=int(ev["data"].get("tokens", 0)),
                             plan=plan,
                             first_token_ms=ev["data"].get("first_token_ms"),
                             total_ms=ev["data"]["total_ms"],
@@ -338,6 +472,26 @@ class InferenceEngine:
                 log.exception("inference attempt %s failed", attempt)
                 continue
         raise InferenceError(f"inference failed after retries: {last_error}")
+
+    @staticmethod
+    def _token_text(
+        model: ResolvedModel, ids: list[int], previous: str, emitted_raw: int
+    ) -> dict:
+        assert model.tokenizer is not None
+        if model.kind == "hf":
+            full = model.tokenizer.decode(ids)
+            raw = full.encode("utf-8")
+            prev = previous.encode("utf-8")
+            if raw.startswith(prev):
+                delta = raw[len(prev) :]
+            else:
+                # The tokenizer rewrote an earlier partial character; send the
+                # whole suffix from the point the client has consumed.
+                delta = raw[emitted_raw:] if emitted_raw <= len(raw) else raw
+            return {"bytes": delta, "full": full}
+        data = bytes(int(i) & 0xFF for i in ids)
+        delta = data[emitted_raw:] if emitted_raw <= len(data) else data
+        return {"bytes": delta, "full": data.decode("utf-8", errors="replace")}
 
     def _sample(self, logits: np.ndarray, req: InferenceRequest, seed: int) -> int:
         arr = np.asarray(logits, dtype=np.float32).reshape(-1)

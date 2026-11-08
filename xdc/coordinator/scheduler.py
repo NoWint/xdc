@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 
@@ -64,7 +65,16 @@ def allocate_stages(nodes: list[NodeRecord], n_layers: int, max_stages: int = 0)
     if max_stages > 0:
         stages = min(stages, max_stages)
     nodes = nodes[:stages]
-    weights = [max(node_score(n), 0.1) for n in nodes]
+    # Layer count should follow compute, not transient free memory.  The latter
+    # is dominated by page cache and changes every heartbeat, which produced
+    # badly unbalanced 23/7 splits on identical workers.
+    # Startup benchmarks on co-located workers are noisy (observed 32 vs 7
+    # GFLOPS on identical CPUs).  A log compress keeps a real 4x hardware gap
+    # meaningful without producing a 24/6 split on the same machine.
+    weights = [
+        math.log1p(max(n.caps().compute_score, 0.1) * max(n.reputation, 0.05))
+        for n in nodes
+    ]
     # Embedding/head work is concentrated at the ends; slightly discount endpoints.
     if stages > 1:
         weights[0] *= 0.9

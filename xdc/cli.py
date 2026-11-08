@@ -103,7 +103,12 @@ def _print_job(job: dict) -> None:
     print(f"job       {job['job_id']} ({job['name']})")
     print(f"state     {job['state']}")
     print(f"progress  round {job['next_round']}/{job['training']['rounds']}  version {job['version']}")
-    print(f"model     {job['model']['n_layer']} layers, {job['parameters']} params")
+    kind = job.get("model_kind", "tinygpt")
+    layers = job["model"].get("n_layer", job["model"].get("num_hidden_layers"))
+    print(f"model     {kind} {layers} layers, {job['parameters']} params")
+    if job.get("stage_plan"):
+        ranges = [f"{s['layer_start']}-{s['layer_end']}@{s['node_name']}" for s in job["stage_plan"]]
+        print(f"stages    {len(ranges)}: {' '.join(ranges)}")
     print(f"loss      initial={job.get('initial_loss')} current={job.get('final_loss')} best={job.get('best_loss')}")
     print(f"tokens    {job['tokens_trained']:,}")
     print(f"workers   {', '.join(job['current_round']['expected']) if job.get('current_round') else '-'}")
@@ -440,6 +445,91 @@ def cmd_dataset(args) -> int:
     return 0
 
 
+MODEL_FILES = {
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "generation_config.json",
+    "model.safetensors",
+    "model.safetensors.index.json",
+}
+
+
+def _upload_model_tree(client: httpx.Client, root: Path, name: str) -> dict:
+    files = [
+        p
+        for p in sorted(root.iterdir())
+        if p.is_file()
+        and (p.name in MODEL_FILES or (p.name.endswith(".safetensors") and p.name != "model.safetensors.index.json"))
+    ]
+    if not files:
+        raise SystemExit(f"no model files found in {root}")
+    for path in files:
+        print(f"uploading {path.name} ({path.stat().st_size / 1e6:.1f} MB)", flush=True)
+        _check(
+            client.put(
+                f"/v1/admin/models/{name}/files/{path.name}",
+                content=path.read_bytes(),
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=1800,
+            )
+        )
+    return _check(client.post(f"/v1/admin/models/{name}/finalize"))
+
+
+def cmd_model(args) -> int:
+    client, _ = admin_client(args)
+    if args.action == "list":
+        print(json.dumps(_check(client.get("/v1/admin/models")), indent=2))
+        return 0
+    if args.action == "show":
+        name = args.name or args.target
+        if not name:
+            raise SystemExit("model show requires a name")
+        print(json.dumps(_check(client.post(f"/v1/admin/models/{name}/finalize")), indent=2))
+        return 0
+    if args.action == "add":
+        path = args.target
+        if not path:
+            raise SystemExit("model add requires a directory")
+        name = args.name or Path(path).resolve().name
+        summary = _upload_model_tree(client, Path(path), name)
+        print(json.dumps(summary, indent=2))
+        return 0
+    if args.action == "pull":
+        repo = args.repo or args.target
+        if not repo:
+            raise SystemExit("model pull requires a repo id")
+        name = args.name or repo.rstrip("/").split("/")[-1]
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as exc:
+            raise SystemExit("model pull requires: pip install 'xdc[hf]'") from exc
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="xdc-model-") as tmp:
+            snapshot_download(
+                repo,
+                revision=args.revision,
+                local_dir=tmp,
+                allow_patterns=[
+                    "config.json",
+                    "tokenizer.json",
+                    "tokenizer_config.json",
+                    "special_tokens_map.json",
+                    "generation_config.json",
+                    "*.safetensors",
+                    "*.safetensors.index.json",
+                ],
+                ignore_patterns=["*.bin", "*.pt", "*.pth", "*.ckpt", "*.msgpack"],
+            )
+            summary = _upload_model_tree(client, Path(tmp), name)
+        print(json.dumps(summary, indent=2))
+        return 0
+    raise SystemExit(f"unknown model action {args.action}")
+
+
 def cmd_train(args) -> int:
     client, _ = admin_client(args)
     dataset_path = Path(args.dataset)
@@ -454,17 +544,22 @@ def cmd_train(args) -> int:
             headers={"Content-Type": "application/octet-stream"},
         )
     )
-    model = {
-        "vocab_size": 256,
-        "n_layer": args.layers,
-        "n_head": args.heads,
-        "n_embd": args.dim,
-        "block_size": args.block_size,
-        "dropout": 0.0,
-        "bias": True,
-    }
+    if args.hf_model:
+        model = {"kind": "hf", "model_name": args.hf_model}
+    else:
+        model = {
+            "vocab_size": 256,
+            "n_layer": args.layers,
+            "n_head": args.heads,
+            "n_embd": args.dim,
+            "block_size": args.block_size,
+            "dropout": 0.0,
+            "bias": True,
+        }
+    algorithm = "pipeline" if args.parallelism == "pipeline" or args.hf_model else args.algorithm
     spec = TrainingSpec(
-        algorithm=args.algorithm,
+        algorithm=algorithm,
+        parallelism=args.parallelism,
         rounds=args.rounds,
         local_steps=args.local_steps,
         batch_size=args.batch_size,
@@ -485,6 +580,13 @@ def cmd_train(args) -> int:
         seed=args.seed,
         compression=args.compression,
         mode=args.mode,
+        micro_batches=args.micro_batches,
+        pipeline_stages=args.pipeline_stages,
+        activation_dtype=args.activation_dtype,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        island=args.island,
+        stage_memory_headroom=args.stage_headroom,
     )
     body = JobCreate(
         name=args.name,
@@ -710,12 +812,30 @@ def build_parser() -> argparse.ArgumentParser:
     ds.add_argument("--name")
     ds.set_defaults(func=cmd_dataset)
 
-    tr = sub.add_parser("train", help="upload dataset and launch a DiLoCo training job")
+    mdl = sub.add_parser("model", help="list/upload/pull Hugging Face safetensors models")
+    admin_args(mdl)
+    mdl.add_argument("action", choices=["list", "show", "add", "pull"])
+    mdl.add_argument("target", nargs="?", help="model directory, repo id, or model name")
+    mdl.add_argument("--name")
+    mdl.add_argument("--repo")
+    mdl.add_argument("--revision")
+    mdl.set_defaults(func=cmd_model)
+
+    tr = sub.add_parser("train", help="upload dataset and launch a DiLoCo or pipeline job")
     admin_args(tr)
     tr.add_argument("--dataset", required=True)
     tr.add_argument("--dataset-name")
     tr.add_argument("--name", default="xdc-demo")
-    tr.add_argument("--algorithm", choices=["diloco", "diloco_decoupled"], default="diloco_decoupled")
+    tr.add_argument("--algorithm", choices=["diloco", "diloco_decoupled", "pipeline"], default="diloco_decoupled")
+    tr.add_argument("--parallelism", choices=["diloco", "pipeline"], default="diloco")
+    tr.add_argument("--hf-model", help="name of a model uploaded with `xdc model add/pull`")
+    tr.add_argument("--micro-batches", type=int, default=4)
+    tr.add_argument("--pipeline-stages", type=int, default=0)
+    tr.add_argument("--activation-dtype", choices=["fp32", "fp16"], default="fp32")
+    tr.add_argument("--lora-rank", type=int, default=0)
+    tr.add_argument("--lora-alpha", type=float, default=0.0)
+    tr.add_argument("--island")
+    tr.add_argument("--stage-headroom", type=float, default=1.25)
     tr.add_argument("--rounds", type=int, default=10)
     tr.add_argument("--local-steps", type=int, default=20)
     tr.add_argument("--batch-size", type=int, default=4)
