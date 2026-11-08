@@ -5,7 +5,9 @@ distributed paths execute and quantify their overhead; they are **not** a
 multi-machine scaling claim. Wall-clock numbers move with background load, so
 treat them as one reproducible sample, not a hardware rating.
 
-Raw result: [`benchmarks/latest.json`](../benchmarks/latest.json).
+Raw results: [`benchmarks/latest.json`](../benchmarks/latest.json),
+[`benchmarks/smollm2_135m_pipeline.json`](../benchmarks/smollm2_135m_pipeline.json),
+[`benchmarks/smollm2_135m_hybrid.json`](../benchmarks/smollm2_135m_hybrid.json).
 
 ## 1. Environment
 
@@ -59,6 +61,26 @@ Reading the table:
 Per-round local times were 2.42 s, 0.80 s and 0.75 s; the first round includes
 model/cache warm-up. Native aggregation per round was ~15 ms.
 
+### 2.1 Pipeline-parallel SmolLM2-135M
+
+A separate run used the real `HuggingFaceTB/SmolLM2-135M-Instruct` checkpoint
+(134.5M parameters, tied embeddings), LoRA rank 4, two CPU workers on the same
+host, 2 rounds, 256 tokens total. Full JSON in
+`benchmarks/smollm2_135m_pipeline.json`.
+
+| Metric | Worker 1 (17 layers) | Worker 2 (13 layers) |
+|---|---:|---:|
+| Parameters held | 356.7 MB | 299.5 MB |
+| Adam state | 5.5 MB | 4.2 MB |
+| Gradients | 2.77 MB | 2.12 MB |
+| Trainable (LoRA) | 691,968 | 529,152 |
+| Round wall | 40.6 s / 37.7 s | (same round) |
+
+The full model's AdamW state (~1.08 GB) was never materialized on one worker.
+Validation loss fell 3.7464 → 3.7043. The same structure with `backend: mps` on
+worker 1 and `cpu` on worker 2 ran 18+12 layers and loss 3.7625 → 3.7446; see
+`benchmarks/smollm2_135m_hybrid.json`.
+
 ## 3. Inference
 
 The model is split into two contiguous stages, one per worker. Stage 0 owns the
@@ -80,6 +102,22 @@ process. It is 3.16× the MPS path here because tiny Metal kernels are
 dispatch-bound. The pipeline's purpose is to run a model whose stage weights do
 not fit on one device, not to make a tiny model faster on one box.
 
+### 3.1 SmolLM2-135M layer-sharded inference
+
+From the CPU pipeline checkpoint, two stages (19 + 11 layers) generated 8 greedy
+tokens. Warm numbers after the coordinator model cache and stage files were
+built:
+
+| Path | Tokens | TTFT | Total |
+|---|---:|---:|---:|
+| SmolLM2-135M, 2 CPU stages, warm | 8 | 2.63 s | 3.13 s |
+| SmolLM2-135M, MPS + CPU, cold | 8 | 17.95 s | 19.32 s |
+
+Cold first requests can include regenerating stage files; on the loaded test disk
+this took up to ~90 s for the 135M model. Normal training jobs reuse their stage
+checkpoints. These are CPU/Metal numbers on one host, not a multi-device
+throughput claim.
+
 ## 4. Native C++ aggregation
 
 Measured through the real `aggregate_deltas` state-dict path (not a synthetic
@@ -100,7 +138,7 @@ path remains correct and is used automatically.
 ## 5. Reproduce
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,hf]"
 python setup.py build_ext --inplace          # optional native extension
 python benchmarks/benchmark.py \
   --workdir /tmp/xdc-bench \
@@ -111,6 +149,18 @@ python benchmarks/benchmark.py \
 The benchmark starts a real coordinator and real worker daemons, uploads the
 corpus, trains, compares distributed greedy bytes with monolithic CPU/MPS bytes,
 and measures native aggregation. It requires no privileged operations.
+
+Pipeline reproduction:
+
+```bash
+python benchmarks/smollm2_pipeline.py \
+  --model-dir /path/to/SmolLM2-135M-Instruct \
+  --rounds 2 --lora-rank 4 --backends cpu,cpu
+
+python benchmarks/smollm2_pipeline.py \
+  --model-dir /path/to/SmolLM2-135M-Instruct \
+  --rounds 1 --lora-rank 4 --backends mps,cpu
+```
 
 ## 6. Caveats
 
